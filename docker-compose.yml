@@ -1,13 +1,11 @@
-version: '3.8'
-
 services:
   qip-chat:
     container_name: qip-chat
     image: ghcr.io/prb-naoby/rpj-qip-chat:latest
     ports:
-      - "8505:8505"
+      - "8506:8506"
     volumes:
-      - qip_data:/app/data
+      - data:/app/data
     restart: unless-stopped
     environment:
       - APP_PASSWORD=${APP_PASSWORD}
@@ -22,6 +20,8 @@ services:
       - UPLOAD_MAX_MB=${UPLOAD_MAX_MB}
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Jakarta
+    networks:
+      - nginx-network
 
 volumes:
-  qip_data:
+  data:
