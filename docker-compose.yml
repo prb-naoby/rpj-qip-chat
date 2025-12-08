@@ -23,5 +23,9 @@ services:
     networks:
       - nginx-network
 
+networks:
+  nginx-network:
+    external: true
+
 volumes:
   data:
