@@ -1,5 +1,5 @@
 """
-Purchasing Data Assistant
+QIP Data Assistant
 Chat-based UI with table selection popup, OneDrive integration, and Indonesian explanations.
 """
 from __future__ import annotations
@@ -46,7 +46,7 @@ settings = AppSettings()
 
 logger.info("Application starting...")
 
-st.set_page_config(page_title="Purchasing Data Assistant", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="QIP Data Assistant", layout="wide", page_icon="🛍️")
 
 # =============================================================================
 # Custom CSS & UI
@@ -180,7 +180,7 @@ def check_password():
 
     st.markdown("""
         <div class="login-container">
-            <h2>🔐 Purchasing Data Assistant</h2>
+            <h2>🔐 QIP Data Assistant</h2>
             <p style="color: var(--text-color); margin-bottom: 2rem; opacity: 0.8;">Silakan login untuk melanjutkan</p>
         </div>
     """, unsafe_allow_html=True)
@@ -541,7 +541,7 @@ def handle_transform_upload(stored_path, selected_sheet, result, display_name, r
 # Main UI
 # =============================================================================
 
-st.title("💬 Purchasing Data Assistant")
+st.title("💬 QIP Data Assistant")
 
 # Tabs
 # Tabs

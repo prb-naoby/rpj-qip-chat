@@ -1,8 +1,8 @@
 version: '3.8'
 
 services:
-  purchasing-chat:
-    container_name: purchasing-chat
+  qip-chat:
+    container_name: qip-chat
     build: .
     ports:
       - "8505:8505"

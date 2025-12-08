@@ -16,7 +16,7 @@ MS_TENANT_ID = os.getenv("MS_TENANT_ID", "").strip()
 MS_CLIENT_ID = os.getenv("MS_CLIENT_ID", "").strip()
 MS_CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET", "").strip()
 ONEDRIVE_DRIVE_ID = os.getenv("ONEDRIVE_DRIVE_ID", "").strip()
-ONEDRIVE_ROOT_PATH = os.getenv("ONEDRIVE_ROOT_PATH", "Purchasing/Data Files").strip()
+ONEDRIVE_ROOT_PATH = os.getenv("ONEDRIVE_ROOT_PATH", "AI/File Report").strip()
 
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"

@@ -1,6 +1,6 @@
-# PandasAI Purchasing Chat
+# PandasAI QIP Chat
 
-An intelligent data analysis application tailored for purchasing data, powered by **Google Gemini 2.5 Flash** and **PandasAI**. This tool allows users to upload datasets, perform natural language queries, and automatically transform data for analysis.
+An intelligent data analysis application tailored for QIP data, powered by **Google Gemini 2.5 Flash** and **PandasAI**. This tool allows users to upload datasets, perform natural language queries, and automatically transform data for analysis.
 
 ## Features
 
