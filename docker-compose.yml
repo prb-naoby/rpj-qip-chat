@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  purchasing-chat:
+    container_name: purchasing-chat
+    build: .
+    ports:
+      - "8505:8505"
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./.env:/app/.env
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Jakarta
