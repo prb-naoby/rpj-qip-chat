@@ -8,10 +8,18 @@ services:
       - "8505:8505"
     volumes:
       - qip_data:/app/data
-    env_file:
-      - .env
     restart: unless-stopped
     environment:
+      - APP_PASSWORD=${APP_PASSWORD}
+      - DEBUG_MODE=${DEBUG_MODE}
+      - MS_CLIENT_ID=${MS_CLIENT_ID}
+      - MS_CLIENT_SECRET=${MS_CLIENT_SECRET}
+      - MS_TENANT_ID=${MS_TENANT_ID}
+      - ONEDRIVE_DRIVE_ID=${ONEDRIVE_DRIVE_ID}
+      - ONEDRIVE_ROOT_PATH=${ONEDRIVE_ROOT_PATH}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PANDASAI_LLM_MODEL=${PANDASAI_LLM_MODEL}
+      - UPLOAD_MAX_MB=${UPLOAD_MAX_MB}
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Jakarta
 
