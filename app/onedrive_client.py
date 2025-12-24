@@ -45,6 +45,10 @@ def _graph_get(url: str, token: str) -> dict:
             wait = int(resp.headers.get("Retry-After", "2"))
             time.sleep(wait)
             continue
+        if resp.status_code == 404:
+            raise RuntimeError("File not found in OneDrive. It may have been moved or deleted. Please refresh the file list.")
+        if resp.status_code == 403:
+            raise RuntimeError("Access denied to OneDrive file. Please check permissions or refresh the file list.")
         resp.raise_for_status()
         return resp.json()
     resp.raise_for_status()
@@ -112,14 +116,21 @@ def get_file_details(token: str, file_id: str) -> dict:
     url = f"{config.GRAPH_BASE_URL}/drives/{drive_id}/items/{file_id}"
     
     try:
-        return _graph_get(url, token)
-    except Exception:
-        return {}
+        result = _graph_get(url, token)
+        print(f"[OneDrive] get_file_details for {file_id}: got downloadUrl={bool(result.get('@microsoft.graph.downloadUrl'))}")
+        return result
+    except Exception as e:
+        print(f"[OneDrive] get_file_details failed for {file_id}: {e}")
+        raise  # Re-raise so caller knows it failed
 
 
 def download_file(download_url: str) -> bytes:
     """Download file bytes."""
     resp = requests.get(download_url, timeout=300)
+    if resp.status_code == 404:
+        raise RuntimeError("Download URL expired or file not found. Please refresh the file list.")
+    if resp.status_code == 403:
+        raise RuntimeError("Access denied. Download URL may have expired. Please refresh the file list.")
     resp.raise_for_status()
     return resp.content
 

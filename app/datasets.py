@@ -70,8 +70,13 @@ def list_all_cached_data() -> List[CachedDataInfo]:
     for parquet_file in PARQUET_CACHE_DIR.glob("*.parquet"):
         cache_key = parquet_file.stem  # filename without extension
         
+        
         # Get metadata if available
         info = metadata.get(cache_key, {})
+        
+        # Skip temporary files (not yet saved/confirmed by user)
+        if info.get("temporary", False):
+            continue
         
         # Read parquet to get row/col count if not in metadata
         try:
@@ -147,7 +152,8 @@ def build_parquet_cache(
     sheet_name: str | int | None = None,
     display_name: str | None = None,
     source_metadata: dict | None = None,
-    transform_explanation: Optional[str] = None
+    transform_explanation: Optional[str] = None,
+    temporary: bool = False
 ) -> Tuple[Path, int, int]:
     """Build parquet cache for a file/sheet if it doesn't exist.
     
@@ -188,6 +194,7 @@ def build_parquet_cache(
         "n_cols": n_cols,
         "source_metadata": source_metadata,
         "transform_explanation": transform_explanation,
+        "temporary": temporary,
     }
     _save_cache_metadata(metadata)
     
@@ -202,6 +209,7 @@ def build_parquet_cache_from_df(
     transform_code: str | None = None,
     source_metadata: dict | None = None,
     transform_explanation: Optional[str] = None,
+    temporary: bool = False,
 ) -> Tuple[Path, int, int]:
     """Build parquet cache directly from a DataFrame (for transformed data).
     
@@ -240,6 +248,7 @@ def build_parquet_cache_from_df(
         "transform_code": transform_code,
         "source_metadata": source_metadata,
         "transform_explanation": transform_explanation,
+        "temporary": temporary,
     }
     _save_cache_metadata(metadata)
     
@@ -251,6 +260,7 @@ def update_existing_parquet_cache(
     df: DataFrame,
     transform_code: str | None = None,
     transform_explanation: Optional[str] = None,
+    display_name: Optional[str] = None,
 ) -> Tuple[int, int]:
     """Update an existing parquet cache file with new data (overwrite)."""
     
@@ -267,6 +277,10 @@ def update_existing_parquet_cache(
     if cache_key in metadata:
         metadata[cache_key]["n_rows"] = n_rows
         metadata[cache_key]["n_cols"] = n_cols
+        
+        if display_name:
+            metadata[cache_key]["display_name"] = display_name
+            
         if transform_code:
             metadata[cache_key]["transform_code"] = transform_code
             metadata[cache_key]["transformed"] = True
@@ -274,9 +288,222 @@ def update_existing_parquet_cache(
         if transform_explanation:
             metadata[cache_key]["transform_explanation"] = transform_explanation
             
+        # Clear temporary flag if it exists (since we are updating/saving)
+        if "temporary" in metadata[cache_key]:
+            del metadata[cache_key]["temporary"]
+            
         _save_cache_metadata(metadata)
     
     return n_rows, n_cols
+
+
+def get_target_table_info(cache_path: Path) -> dict:
+    """Get transform code and schema info for a target table.
+    
+    Args:
+        cache_path: Path to the target parquet file
+        
+    Returns:
+        Dict with keys:
+        - transform_code: Optional[str] - stored Python transform code
+        - transform_explanation: Optional[str] - natural language explanation
+        - columns: List[str] - column names in target table
+        - n_rows: int - row count
+        - display_name: str - display name
+        - original_file: str - original source file name
+    """
+    cache_key = cache_path.stem
+    metadata = _load_cache_metadata()
+    info = metadata.get(cache_key, {})
+    
+    # Read target table for column info
+    try:
+        target_df = pd.read_parquet(cache_path)
+        columns = list(target_df.columns)
+        n_rows = len(target_df)
+    except Exception:
+        columns = []
+        n_rows = 0
+    
+    return {
+        "transform_code": info.get("transform_code"),
+        "transform_explanation": info.get("transform_explanation"),
+        "columns": columns,
+        "n_rows": n_rows,
+        "display_name": info.get("display_name", cache_path.stem),
+        "original_file": info.get("original_file", "Unknown"),
+        "original_columns": info.get("original_columns"),  # columns before transform
+    }
+
+
+def apply_stored_transform(
+    source_df: DataFrame,
+    transform_code: str,
+    preview_only: bool = True,
+    max_preview_rows: int = 100
+) -> Tuple[Optional[DataFrame], Optional[str]]:
+    """Apply stored transform code to new source data.
+    
+    Args:
+        source_df: New source DataFrame to transform
+        transform_code: Python code that transforms df into normalized_df
+        preview_only: If True, only transform first max_preview_rows
+        max_preview_rows: Number of rows to use for preview
+        
+    Returns:
+        (transformed_df, error_message)
+        error_message is None on success
+    """
+    import numpy as np
+    import re as re_module
+    import datetime
+    
+    # Use sample for preview, full data for final
+    if preview_only:
+        df_to_transform = source_df.head(max_preview_rows).copy()
+    else:
+        df_to_transform = source_df.copy()
+    
+    try:
+        local_ns = {
+            "df": df_to_transform,
+            "pd": pd,
+            "np": np,
+            "re": re_module,
+            "datetime": datetime,
+        }
+        
+        global_ns = local_ns.copy()
+        global_ns["__builtins__"] = __builtins__
+        
+        exec(transform_code, global_ns)
+        
+        # Find result DataFrame
+        result_df = None
+        for var_name in ["normalized_df", "df_result", "df_new", "df_transformed", "df_melted", "df_final", "result", "df"]:
+            if var_name in global_ns and isinstance(global_ns[var_name], DataFrame):
+                result_df = global_ns[var_name]
+                break
+        
+        if result_df is None:
+            for var_name, var_value in global_ns.items():
+                if isinstance(var_value, DataFrame) and var_name != "_":
+                    if var_name == "df" or (len(var_value) != len(df_to_transform) or list(var_value.columns) != list(df_to_transform.columns)):
+                        result_df = var_value
+                        break
+        
+        if result_df is None:
+            result_df = global_ns.get("df", df_to_transform)
+        
+        if not isinstance(result_df, DataFrame):
+            return None, "Transform code did not produce a DataFrame"
+        
+        # Check for duplicate columns
+        if result_df.columns.duplicated().any():
+            dup_cols = result_df.columns[result_df.columns.duplicated()].tolist()
+            return None, f"Transform produced duplicate columns: {dup_cols[:5]}"
+        
+        return result_df, None
+        
+    except Exception as e:
+        return None, f"Transform execution error: {str(e)}"
+
+
+def append_to_parquet_cache(
+    cache_path: Path,
+    new_df: DataFrame,
+    description: str,
+    transform_code: Optional[str] = None,
+    transform_explanation: Optional[str] = None,
+) -> Tuple[int, int, Optional[str]]:
+    """Append new data to an existing parquet cache file.
+    
+    Args:
+        cache_path: Path to existing parquet file
+        new_df: New DataFrame to append
+        description: User description for this append batch
+        transform_code: Optional new transform code to update/save in metadata
+        transform_explanation: Optional explanation for the new transform
+        
+    Returns:
+        (total_rows, rows_added, error_message)
+        error_message is None on success, or a natural language explanation on failure
+    """
+    from datetime import datetime
+    
+    # Load existing data
+    try:
+        existing_df = pd.read_parquet(cache_path)
+    except Exception as e:
+        return 0, 0, f"Could not read existing table: {str(e)}"
+    
+    # Validate column schema match
+    existing_cols = set(existing_df.columns)
+    new_cols = set(new_df.columns)
+    
+    if existing_cols != new_cols:
+        missing_in_new = existing_cols - new_cols
+        extra_in_new = new_cols - existing_cols
+        
+        error_parts = []
+        if missing_in_new:
+            error_parts.append(f"Missing columns in new data: {', '.join(sorted(missing_in_new))}")
+        if extra_in_new:
+            error_parts.append(f"Extra columns in new data: {', '.join(sorted(extra_in_new))}")
+        
+        error_msg = (
+            f"Cannot append: Column structure does not match the target table.\n\n"
+            f"{chr(10).join(error_parts)}\n\n"
+            f"Please ensure your new data has exactly these columns: {', '.join(sorted(existing_cols))}"
+        )
+        return 0, 0, error_msg
+    
+    # Reorder columns to match existing
+    new_df = new_df[existing_df.columns]
+    
+    # Process new data
+    new_df = _downcast_dtypes(new_df.copy())
+    new_df = _sanitize_for_parquet(new_df)
+    
+    rows_added = len(new_df)
+    
+    # Append
+    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+    
+    # Sanitize combined data to handle any type mismatches from concat
+    combined_df = _sanitize_for_parquet(combined_df)
+    combined_df.to_parquet(cache_path, index=False)
+    
+    total_rows = len(combined_df)
+    
+    # Update metadata
+    cache_key = cache_path.stem
+    metadata = _load_cache_metadata()
+    
+    if cache_key in metadata:
+        metadata[cache_key]["n_rows"] = total_rows
+        
+        # Update transform info if provided
+        if transform_code:
+            metadata[cache_key]["transform_code"] = transform_code
+            if transform_explanation:
+                metadata[cache_key]["transform_explanation"] = transform_explanation
+            elif "transform_explanation" not in metadata[cache_key]:
+                metadata[cache_key]["transform_explanation"] = "Transform generated during append."
+
+        # Track append history
+        if "append_history" not in metadata[cache_key]:
+            metadata[cache_key]["append_history"] = []
+        
+        metadata[cache_key]["append_history"].append({
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "description": description,
+            "rows_added": rows_added
+        })
+        
+        _save_cache_metadata(metadata)
+    
+    return total_rows, rows_added, None
 
 
 def _sanitize_for_parquet(df: DataFrame) -> DataFrame:

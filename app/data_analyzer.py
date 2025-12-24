@@ -35,7 +35,6 @@ class TransformResult:
     validation_notes: List[str] = field(default_factory=list)  # Validation feedback
     iterations_used: int = 1  # How many iterations to get valid result
     has_error: bool = False  # True if generation failed (dangerous code, all iterations failed, etc.)
-    has_error: bool = False  # True if generation failed (dangerous code, all iterations failed, etc.)
     failed_code: str = ""  # Store the failed code for debugging
     explanation: str = ""  # Natural language explanation of the transformation
 
@@ -301,6 +300,16 @@ RULES KETAT:
 
 ⚠️ PENTING: PERTAHANKAN SEMUA KOLOM dari data original kecuali benar-benar tidak diperlukan
 ⚠️ WAJIB: Simpan hasil akhir ke variable `normalized_df`. Jangan ubah `df` original.
+
+DATA QUALITY - SCAN DAN FIX:
+Lihat sample data di atas. Jika kamu menemukan:
+1. **Kolom persentase** dengan mix format (0.91, 91, "91%") → standardize ke 0-1
+2. **Nilai aneh** (misal: persentase >100 atau negatif) → fix atau null-kan
+3. **String di kolom numerik** (misal: "N/A", "-", "null") → convert ke NaN
+4. **Format angka tidak konsisten** (1,234 vs 1234) → standardize
+
+Sebutkan nilai spesifik yang kamu temukan dan fix dalam "issues" list.
+Contoh: "Kolom %RFT ada nilai '91%' dan 0.91 - standardize ke 0-1"
 
 FORMAT JAWABAN (JSON):
 

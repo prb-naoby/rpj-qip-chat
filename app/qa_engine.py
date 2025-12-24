@@ -24,7 +24,7 @@ class QAResult:
     response: Any
     code: str | None = None
     explanation: str | None = None  # AI explanation of the results
-    st_components: List[dict] = field(default_factory=list)  # Streamlit components to render
+    ui_components: List[dict] = field(default_factory=list)  # Native UI components to render
     iterations_used: int = 1  # How many iterations to get valid result
     has_error: bool = False  # True if generation failed (all iterations failed)
     failed_code: str = ""  # Store the failed code for debugging
@@ -32,7 +32,9 @@ class QAResult:
 
 
 _SYSTEM_PROMPT = """\
-Kamu adalah asisten analisis data Python yang berjalan di dalam Streamlit app.
+Kamu adalah asisten analisis data Python yang berjalan di dalam environment Python standard.
+Data ini berasal dari konteks manufaktur/pabrik - semua kolom berhubungan dengan produksi, kualitas, dan performa.
+
 
 ## KRITIS - BACA INI DULU!
 Variable `df` SUDAH BERISI DATA LENGKAP ({total_rows} baris) yang di-load dari parquet.
@@ -41,119 +43,53 @@ JANGAN PERNAH membuat DataFrame baru! Langsung gunakan `df`.
 ## Kolom yang Tersedia
 {columns}
 
-⚠️ PENTING: Gunakan EXACT nama kolom seperti di atas. Jika tidak yakin nama kolom, gunakan:
-```python
-available_cols = df.columns.tolist()
-print(f"Kolom tersedia:", available_cols)
+## Sample Data
 ```
-
-## Sample Data (5 baris pertama, untuk referensi struktur saja):
 {sample}
-
-{description_section}
-
-## Aturan Kode
-1. LANGSUNG gunakan variable `df` - sudah berisi semua data
-2. **WAJIB FUZZY MATCH untuk search nama/teks** - lihat section di bawah!
-3. Untuk tanggal, gunakan `pd.to_datetime(..., errors='coerce')`
-4. **UNTUK MENAMPILKAN DATAFRAME:** Gunakan `st.dataframe(df.head(50))` - MAKSIMAL 50 ROWS!
-5. Untuk hasil angka/teks: gunakan `st.write()` atau `st.metric()`
 ```
 
-**Contoh penggunaan:**
+## Aturan Output - PRIORITAS UTAMA!
+Jawab dengan PENJELASAN NATURAL yang bersih. Hindari output teknis/debug.
+
+1. **UTAMAKAN print() untuk penjelasan**: Jawab pertanyaan user dengan bahasa natural dan LANGSUNG ke inti.
+   - ❌ SALAH: print(f"Line dengan rata-rata pct_rft tertinggi: ['Line 14']")
+   - ✅ BENAR: print("Line 14 memiliki rata-rata RFT tertinggi sebesar 91%.")
+
+2. **MINIMAL display()**: Gunakan display() HANYA JIKA data tabel DIPERLUKAN untuk menjawab.
+   - Jika user tanya nilai tunggal, JANGAN tampilkan tabel, cukup print jawabannya
+   - Jika user tanya ranking/list, tampilkan SATU tabel ringkas saja
+   - JANGAN tampilkan multiple displays (stat + tabel + tabel lagi)
+
+3. **JANGAN print debug/diagnostik ke user**:
+   - JANGAN: print(df.head()), print(df.describe()), print(df['col'].unique())
+   - JANGAN: print("Tipe data:", df.dtypes)
+   - JANGAN: print("Contoh data:", ...)
+
+## Contoh Jawaban BENAR
 ```python
-# Cari supplier
-mask = fuzzy_match(df['Supplier Name'], 'SUNG DONG IL', threshold=80)
-
-# Cari dengan filter tambahan (tahun)
-df['PO Date'] = pd.to_datetime(df['PO Date'], errors='coerce')
-mask_supplier = fuzzy_match(df['Supplier Name'], 'SUNG DONG IL', threshold=80)
-mask_year = df['PO Date'].dt.year == 2025
-result = df[mask_supplier & mask_year]
-st.dataframe(result.head(50))
+# User: "Bagaimana tren RFT di 2025?"
+# BENAR - Penjelasan singkat + tabel jika perlu
+rft_trend = df[df['YEAR']==2025].groupby('MONTH')['%RFT'].mean() * 100
+print(f"Rata-rata RFT di 2025 adalah {{rft_trend.mean():.1f}}%.")
+print(f"Tren: {{'Meningkat' if trend > 0 else 'Menurun' if trend < 0 else 'Stabil'}} dari Oktober ke November.")
+display(rft_trend.reset_index(), label="RFT per Bulan")
 ```
 
-**Parameter threshold:**
-- `threshold=70` untuk match lebih loose (typo-tolerant)
-- `threshold=80` untuk balance (RECOMMENDED)
-- `threshold=90` untuk match lebih strict
+## Aturan Bahasa Output
+1. JANGAN tampilkan list/dict Python mentah - jelaskan dalam kalimat
+2. Format angka: 91% bukan 0.91, ribuan dengan titik
+3. Gunakan kalimat lengkap, bahasa Indonesia natural
+4. **JANGAN TAWARKAN LANJUTAN** - Setelah jawaban lengkap, STOP. Jangan print "Ada pertanyaan lanjutan?" atau "Mau saya bantu?"
 
-# → KEDUA: Tampilkan: Supplier (context) + Score (jawaban) + Value (supporting)
-available_cols = df.columns.tolist()
-# Tentukan kolom yang akan digunakan
-context_col = 'Supplier' if 'Supplier' in available_cols else 'Name'
-score_col = 'Score' if 'Score' in available_cols else 'Performance'
-value_col = 'Value' if 'Value' in available_cols else 'Cost'
-
-mask = df[score_col] > df[score_col].quantile(0.9)
-result = df[mask][[context_col, score_col, value_col]].head(50)
-st.dataframe(result, use_container_width=True)  ✅ BENAR
-```
-
-⚠️ PENTING: SELALU CHECK NAMA KOLOM YANG SEBENARNYA ADA DI `df.columns` SEBELUM MENGGUNAKAN!
-
-
-### Cara Memilih Kolom yang Tepat:
-
-**Analisis pertanyaan user dan pilih kolom:**
-
-1. **Identifikasi konteks pertanyaan:**
-   - Siapa/apa yang ditanya? (supplier, kategori, periode, dll)
-   - Ini adalah kolom "context" yang harus di-include
-
-2. **Identifikasi metrik yang ditanya:**
-   - Apa yang ingin dijawab? (total, performa, perbandingan, dll)
-   - Ini adalah kolom "jawaban" yang harus di-include
-
-3. **Tambah supporting info:**
-   - Data apa lagi yang penting untuk memahami? (periode, status, detail, dll)
-   - Include jika relevant dengan pertanyaan
-
-```python
-# Contoh:
-# Pertanyaan: "Berapa order dari supplier ABC bulan lalu?"
-# Context: Supplier ABC
-# Jawaban: Order Quantity
-# Supporting: Date/Period, Status
-result = df[df['Supplier'] == 'ABC'].tail(30)[['Supplier', 'Date', 'Order Qty', 'Value']]
-st.dataframe(result, use_container_width=True)
-
-# Pertanyaan: "Mana bulan dengan penjualan terbesar?"
-# Context: Period
-# Jawaban: Sales/Revenue
-# Supporting: Trend info
-monthly = df.groupby('Period').agg({'Sales': 'sum'}).reset_index()
-monthly = monthly.sort_values('Sales', ascending=False)
-st.dataframe(monthly.head(12), use_container_width=True)
-```
-
-### DataFrame Display Rules:
-- LIMIT 50 ROWS dengan `df.head(50)`
-
-## DILARANG (LIBRARY & FUNGSI):
-- ⛔ JANGAN import library eksternal apapun (contoh: fuzzywuzzy, rapidfuzz, numpy, pandas, re, process, tabulate, dsb) — SEMUA SUDAH TERSEDIA di environment!
-- ⛔ JANGAN definisikan ulang fungsi yang sudah ada di environment (misal: fuzzy_match, pd.to_datetime, dsb)
-
-Selalu CEK fungsi yang sudah tersedia di environment sebelum membuat fungsi baru!
-
-## ANTI-HALLUCINATION & ERROR PREVENTION:
-1. **NameError Prevention**:
-   - JANGAN: `if condition: x = 1` lalu print(x) ← Error jika condition False!
-   - HARUS: `x = 0` (default) di awal, baru `if condition: x = 1`
-
-2. **KeyError Prevention**:
-   - JANGAN: `df['Disc %']` jika belum yakin kolom ada.
-   - HARUS: `cols = [c for c in ['Disc %', 'Discount'] if c in df.columns]`
-
-3. **Empty Data Prevention**:
-   - JANGAN: `st.dataframe(df[mask])` jika mask kosong.
-   - HARUS:
-     ```python
-     if result.empty:
-         st.warning("Data tidak ditemukan")
-     else:
-         st.dataframe(result.head(50))
-     ```
+## Aturan Coding - WAJIB IKUTI!
+1. LANGSUNG gunakan variable `df` - JANGAN buat variabel baru untuk DataFrame.
+2. **HANYA GUNAKAN KOLOM DI ATAS** - Jangan buat kolom baru seperti MONTH_NUM. Gunakan kolom yang sudah ada.
+3. **MODUL TERSEDIA**: Hanya `pd`, `np`, `re`. JANGAN import sklearn, scipy, atau modul lain.
+4. **HANDLE NaN**: Selalu gunakan `errors='coerce'` dan `dropna()` sebelum operasi numerik:
+   - `pd.to_numeric(df['col'], errors='coerce').dropna()`
+   - Jangan langsung `.astype(int)` tanpa handle NaN dulu
+5. Untuk pencarian teks: `df[df['KOLOM'].str.contains('query', case=False, na=False)]`
+6. Handle empty: `if result.empty or len(result) == 0: print("Data tidak tersedia")`
 
 Balas HANYA dengan blok kode Python (```python ... ```).
 """
@@ -161,39 +97,38 @@ Balas HANYA dengan blok kode Python (```python ... ```).
 # Sampling config - keep small to avoid AI copying data
 SAMPLE_SIZE = 5  # only show 5 rows for structure reference
 
-# Prompt for explaining query results
-_EXPLAIN_PROMPT = """\
+# Prompt for explaining methodology and results
+_EXPLAIN_SYSTEM = """\
 Kamu adalah asisten analisis data yang membantu menjelaskan hasil query.
 
-## Pertanyaan User:
-{user_question}
-
-## Hasil Query (Data Aktual):
-{query_result}
-
 ## Tugas:
-Analisis data di atas dan berikan INSIGHT yang menjawab pertanyaan user.
+Berikan penjelasan singkat yang menjawab pertanyaan user dengan cara PERCAKAPAN yang natural.
 
-## Aturan WAJIB:
-1. BACA DATA YANG ADA - jangan bilang "tidak ada informasi" jika data sudah tersedia!
-2. MENTION identifier yang relevan: nama, kategori, periode, tipe, dll (berguna agar user tahu siapa/apa yang dimaksud)
-3. Jika ada kolom numerik (value, qty, score, dll) - ANALISIS nilainya:
-   - Rata-rata, min, max, trend, perbandingan
-   - Apakah bagus atau perlu perhatian
-   - Highlight outlier/anomali jika ada
-4. Jawab LANGSUNG pertanyaan user dengan data yang ada
-5. Gunakan angka spesifik dari tabel
-6. Berikan insight/rekomendasi praktis jika relevan
+## Format Jawaban (2 bagian):
 
-## Contoh Insight yang Bagus:
-- "TOP 3 Category: ABC (Rp 5M), DEF (Rp 3M), GHI (Rp 2M) - ABC mendominasi 50% total value"
-- "Trend naik dari Jan (Rp 1M) ke Jul (Rp 2M) - growth 100% year-to-date"
-- "5 supplier dengan value <Rp 500K - pertimbangkan konsolidasi untuk efisiensi"
-- "April mencatat peak dengan 300 qty (2x rata-rata) - ada seasonal factor"
+### Bagian 1: Insight (Wajib)
+Jawab pertanyaan user secara LANGSUNG dengan bahasa natural:
+- Sebut nama/identifier spesifik dari data
+- Sertakan angka penting (gunakan format yang mudah dibaca: 91% bukan 0.91)
+- Beri konteks atau perbandingan jika relevan
+- 2-4 bullet points maksimal
 
-## Format:
-Bullet points singkat dan informatif (2-5 poin).
-WAJIB menyebut angka spesifik dan identifier dari data.
+### Bagian 2: Metodologi (Wajib)
+Jelaskan SINGKAT bagaimana data didapat, contoh:
+"Saya menggunakan data [nama tabel], kemudian mengelompokkan berdasarkan [kolom] dan menghitung [metrik]. Hasilnya disortir untuk menemukan [jawaban]."
+
+## Contoh Output yang BENAR:
+
+**Insight:**
+• Line 14 memiliki rata-rata RFT tertinggi (91%), diikuti Line 23 (89%) dan Line 20 (89%)
+• Dari 7 line yang dianalisis, perbedaan performa berkisar 74% hingga 91%
+
+**Metodologi:**
+Saya menganalisis data produksi, mengelompokkan berdasarkan kolom LINE, lalu menghitung rata-rata PCT_RFT untuk masing-masing line. Hasilnya disortir dari tertinggi ke terendah.
+
+---
+
+Ada pertanyaan lanjutan tentang data ini? Silakan tanya!
 """
 
 
@@ -294,75 +229,62 @@ def _safe_exec(code: str, df: DataFrame) -> tuple[str, List[dict]]:
     from fuzzywuzzy import fuzz as fuzzywuzzy_fuzz
     
     buf = io.StringIO()
-    st_components = []
+    ui_components = []
     
-    # Mock streamlit to capture output
-    class MockStreamlit:
-        def dataframe(self, data, use_container_width=False, **kwargs):
-            """Capture dataframe display."""
-            if isinstance(data, DataFrame):
-                # Sanitize for display (handle non-serializable types)
-                display_df = _sanitize_df_for_display(data.head(50).copy())
-                st_components.append({
-                    "type": "dataframe",
-                    "data": display_df,
-                    "total_rows": len(data),
-                    "kwargs": {"use_container_width": use_container_width, **kwargs}
-                })
-            else:
-                st_components.append({"type": "dataframe", "data": data})
+    # Native UI Output Function
+    def display(data, label=None, **kwargs):
+        """
+        Display data in the Native UI.
         
-        def metric(self, label, value, delta=None, **kwargs):
-            """Capture metric call."""
-            st_components.append({
-                "type": "metric",
-                "label": label,
-                "value": value,
-                "delta": delta,
-                "kwargs": kwargs
+        Args:
+            data: The data to display (DataFrame, int, str, list, dict)
+            data: The data to display (DataFrame, int, str, list, dict)
+            label: Optional label for metrics or sections
+            type: Optional type override (e.g., 'clarification')
+        """
+        # Handling explicit type override
+        if kwargs.get('type') == 'clarification' and isinstance(data, dict):
+            ui_components.append({
+                "type": "clarification",
+                "question": data.get("question", "Mohon perjelas maksud Anda"),
+                "options": data.get("options", []),
+                "label": label
             })
-        
-        def write(self, *args, **kwargs):
-            """Capture write call."""
-            st_components.append({
-                "type": "write",
-                "content": " ".join(str(a) for a in args),
-                "kwargs": kwargs
+            return
+
+        # 1. DataFrame -> Table
+        if isinstance(data, (pd.DataFrame, pd.Series)):
+             if isinstance(data, pd.Series):
+                 data = data.to_frame()
+             
+             display_df = _sanitize_df_for_display(data.head(50).copy())
+             ui_components.append({
+                 "type": "table",
+                 "data": display_df.to_dict(orient='records'),
+                 "columns": list(display_df.columns),
+                 "total_rows": len(data),
+                 "label": label
+             })
+             
+        # 2. Number -> Stat (Metric)
+        elif isinstance(data, (int, float, np.number)):
+            ui_components.append({
+                "type": "stat",
+                "value": data,
+                "label": label or "Value"
             })
-        
-        def caption(self, text, **kwargs):
-            """Capture caption call."""
-            st_components.append({
-                "type": "caption",
-                "text": text,
-                "kwargs": kwargs
+            
+        # 3. List/Dict -> JSON View
+        elif isinstance(data, (list, dict)):
+            ui_components.append({
+                "type": "json",
+                "data": data,
+                "label": label
             })
-        
-        def success(self, text, **kwargs):
-            st_components.append({"type": "success", "text": text})
-        
-        def warning(self, text, **kwargs):
-            st_components.append({"type": "warning", "text": text})
-        
-        def error(self, text, **kwargs):
-            st_components.append({"type": "error", "text": text})
-        
-        def info(self, text, **kwargs):
-            st_components.append({"type": "info", "text": text})
-        
-        def table(self, data, **kwargs):
-            """Capture table call."""
-            if isinstance(data, DataFrame):
-                display_df = _sanitize_df_for_display(data.head(50).copy())
-                st_components.append({
-                    "type": "table",
-                    "data": display_df,
-                    "total_rows": len(data)
-                })
-            else:
-                st_components.append({"type": "table", "data": data})
-    
-    mock_st = MockStreamlit()
+            
+        # 4. String/Other -> Text
+        else:
+             print(str(data)) # Fallback to standard print which is captured as text
     
     local_ns: dict[str, Any] = {
         "__builtins__": __builtins__,
@@ -370,12 +292,7 @@ def _safe_exec(code: str, df: DataFrame) -> tuple[str, List[dict]]:
         "pd": pd,
         "np": np,
         "re": re_module,
-        "datetime": datetime,
-        "tabulate": __import__("tabulate").tabulate,
-        "fuzzy_match": _fuzzy_match,
-        "fuzz": fuzzywuzzy_fuzz,  # For AI-generated code using fuzzywuzzy
-        "fuzzywuzzy": type('fuzzywuzzy', (), {'fuzz': fuzzywuzzy_fuzz})(),  # Mock module
-        "st": mock_st,  # Mock Streamlit
+        "display": display,  # Native UI display function
     }
     try:
         with redirect_stdout(buf):
@@ -389,7 +306,11 @@ def _safe_exec(code: str, df: DataFrame) -> tuple[str, List[dict]]:
         exc_type = type(exc).__name__
         return f"❌ Execution error ({exc_type}): {str(exc)}\n\nPastikan kolom yang digunakan ada di data.", []
     output = buf.getvalue()
-    return output if output.strip() else "", st_components
+    
+    # Return printed output directly (frontend will display it)
+    # ui_components only contains display() calls (tables, stats, etc.)
+        
+    return output if output.strip() else "", ui_components
 
 
 def _sanitize_df_for_display(df: DataFrame) -> DataFrame:
@@ -418,28 +339,40 @@ class PandasAIClient:
         self.client = OpenAI(api_key=api_key)
         self.model_name = model or settings.default_llm_model
 
-    def _generate_explanation(self, user_question: str, query_result: str) -> str:
+    def _generate_explanation(self, user_question: str, query_result: str, ui_components: list = None) -> str:
         """Generate AI explanation of the query results."""
         # Skip explanation for errors or empty results
         if not query_result or "❌ Error" in query_result or "Execution error" in query_result:
             return ""
         
         # Skip if result is too short (probably just a simple number already explained)
-        if len(query_result.strip()) < 20 and "\n" not in query_result:
+        if len(query_result.strip()) < 20 and "\n" not in query_result and not ui_components:
             return ""
 
+        # Build full result including tables from ui_components
+        full_result = query_result
+        if ui_components:
+            for comp in ui_components:
+                if comp.get("type") == "table" and comp.get("data"):
+                    # Include table data in explanation context
+                    import pandas as pd
+                    table_df = pd.DataFrame(comp["data"])
+                    full_result += f"\n\n### Tabel: {comp.get('label', 'Data')}\n{table_df.head(10).to_string()}"
+
         try:
+            # Pass format instructions as system, actual data as input
             response = self.client.responses.create(
                 model=self.model_name,
-                instructions=_EXPLAIN_PROMPT,
-                input=f"PERTANYAAN USER: {user_question}\n\nHASIL QUERY:\n{query_result}",
+                instructions=_EXPLAIN_SYSTEM,
+                input=f"## Pertanyaan User:\n{user_question}\n\n## Hasil Query (Data Aktual):\n{full_result}",
             )
             return response.output_text
         except Exception as e:
             return f"Gagal generate penjelasan: {str(e)}"
 
     def ask(self, df: DataFrame, prompt: str, explain: bool = True, 
-            table_description: str = None, column_descriptions: dict = None) -> QAResult:
+            table_description: str = None, column_descriptions: dict = None,
+            history: List[dict] = None) -> QAResult:
         """
         Ask a question about the DataFrame with iterative retry (max 3 attempts).
         
@@ -447,6 +380,9 @@ class PandasAIClient:
             df: The DataFrame to query
             prompt: User's question
             explain: If True, generate AI explanation of results (default: True)
+            table_description: Optional description of the table
+            column_descriptions: Optional descriptions of specific columns
+            history: Optional list of previous messages [{"role": "user"|"assistant", "content": "..."}]
             
         Returns:
             QAResult with response, code, and optional explanation
@@ -468,17 +404,36 @@ class PandasAIClient:
                 # Build messages with error context if retry
                 current_prompt = prompt
                 
+                # Add History Context (only on first iteration, or always? Always is safer for context)
+                history_context = ""
+                if history:
+                    history_context = "## Riwayat Percakapan (Context):\n"
+                    # Limit to last 5 exchanges to save tokens
+                    recent_history = history[-10:] 
+                    for msg in recent_history:
+                        role = "User" if msg.get("role") == "user" else "Assistant"
+                        content = msg.get("content", "")
+                        # Truncate long content
+                        if len(content) > 500:
+                            content = content[:500] + "...(truncated)"
+                        history_context += f"- {role}: {content}\n"
+                    history_context += "\n## Pertanyaan Baru:\n"
+                
                 if error_history:
-                    # Add error context for retry (similar to Data Analyzer)
-                    error_context = "\n\n⚠️ RETRY - ERROR SEBELUMNYA:\n"
-                    for idx, err in enumerate(error_history[-2:], 1):  # Show last 2 errors
-                        error_context += f"Attempt {err['iteration']}: {err['error']}\n"
-                    error_context += "\nCara fix:\n"
-                    error_context += "1. Gunakan nama kolom EXACT seperti di list 'Kolom yang Tersedia'\n"
-                    error_context += "2. Jika tidak yakin, print: available_cols = df.columns.tolist()\n"
-                    error_context += "3. Gunakan approach lebih simple jika kode complex\n\n"
+                    # Add error context for retry - instruct to try different approach WITHOUT debug prints
+                    error_context = "\n\n⚠️ RETRY - PENDEKATAN SEBELUMNYA TIDAK BERHASIL:\n"
+                    for idx, err in enumerate(error_history[-2:], 1):
+                        error_context += f"Attempt {err['iteration']}: {err['error'][:200]}\n"
+                    error_context += "\n⚡ COBA PENDEKATAN BERBEDA (JANGAN print debug, langsung jawab):\n"
+                    error_context += "1. Jika filter tidak ada data, tampilkan data yang TERSEDIA (misal: tahun lain)\n"
+                    error_context += "2. Cek nama kolom dengan benar - gunakan EXACT match\n"
+                    error_context += "3. Jika persentase, pastikan sudah dalam format yang benar (0-1 atau 0-100)\n"
+                    error_context += "4. JANGAN print debug atau sample values - langsung berikan analisis\n\n"
                     error_context += f"USER QUESTION: {prompt}"
-                    current_prompt = error_context
+                    current_prompt = history_context + error_context
+                else:
+                    # Normal prompt with history
+                    current_prompt = history_context + prompt if history_context else prompt
                 
                 # Generate code
                 response = self.client.responses.create(
@@ -486,132 +441,61 @@ class PandasAIClient:
                     instructions=system_prompt,
                     input=current_prompt,
                 )
+                generated_text = response.output_text
+                code = _extract_code(generated_text)
                 
-                raw_answer = response.output_text
-                code = _extract_code(raw_answer)
-                logger.info(f"Generated code:\n{code[:200]}..." if len(code) > 200 else f"Generated code:\n{code}")
-                result, st_components = _safe_exec(code, df)
+                # Execute Code
+                output, ui_components = _safe_exec(code, df)
                 
-                # Check if execution successful (no error)
-                # Handle None/empty result safely
-                result_str = result if result else ""
-                has_error = "❌ Error" in result_str or "Execution error" in result_str
-                logger.info(f"Execution result: has_error={has_error}, result_preview={result_str[:100]}..." if len(result_str) > 100 else f"Execution result: has_error={has_error}, result={result_str}")
+                # Check for execution error
+                if "❌ Error" in output or "❌ Execution error" in output:
+                    print(f"[DEBUG QA] Iteration {iteration}: Execution error detected, will retry")
+                    raise Exception(output)
                 
-                if not has_error:
-                    # Success! Build explanation and return
-                    validation_notes.append(f"Iterasi {iteration}: Query berhasil")
-                    try:
-                        text_for_explain = result if result else ""
-                        for comp in st_components:
-                            if comp["type"] == "dataframe" and "data" in comp:
-                                comp_df = comp["data"]
-                                total_rows = comp.get("total_rows", len(comp_df))
-                                text_for_explain += f"\n\n📊 Data ({len(comp_df)} baris ditampilkan"
-                                if total_rows > len(comp_df):
-                                    text_for_explain += f" dari {total_rows} total"
-                                text_for_explain += "):\n"
-                                try:
-                                    text_for_explain += comp_df.head(20).to_markdown(index=False)
-                                except:
-                                    text_for_explain += comp_df.head(20).to_string(index=False)
-                            elif comp["type"] == "metric":
-                                text_for_explain += f"\n📈 {comp.get('label', 'Metric')}: {comp.get('value', 'N/A')}"
-                            elif comp["type"] == "write":
-                                text_for_explain += f"\n{comp.get('content', '')}"
-                            elif comp["type"] == "caption":
-                                text_for_explain += f"\n({comp.get('text', '')})"
-                        
-                        explanation = ""
-                        if explain and (text_for_explain.strip() or st_components):
-                            explanation = self._generate_explanation(prompt, text_for_explain)
-                        
-                        return QAResult(
-                            prompt=prompt, 
-                            response=result, 
-                            code=code, 
-                            explanation=explanation, 
-                            st_components=st_components,
-                            iterations_used=iteration,
-                            validation_notes=validation_notes
-                        )
-                    except Exception as build_err:
-                        # Error building explanation - still return result without explanation
-                        logger.error(f"Failed to build explanation: {build_err}")
-                        validation_notes.append(f"Iterasi {iteration}: Gagal build explanation - {build_err}")
-                        return QAResult(
-                            prompt=prompt,
-                            response=result if result else "(Hasil tersedia di tabel)",
-                            code=code,
-                            explanation=f"(Gagal build explanation: {build_err})",
-                            st_components=st_components,
-                            iterations_used=iteration,
-                            validation_notes=validation_notes
-                        )
-                else:
-                    # Error occurred - save to history and retry (similar to Data Analyzer)
-                    validation_notes.append(f"Iterasi {iteration}: Error eksekusi - {result[:100]}...")
-                    error_entry = {
-                        "iteration": iteration,
-                        "error": result,
-                        "code": code
-                    }
-                    error_history.append(error_entry)
-                    
-                    # If last iteration, return error result
-                    if iteration == MAX_ITERATIONS:
-                        logger.error(f"Max iterations reached, returning error")
-                        return QAResult(
-                            prompt=prompt,
-                            response=result + f"\n\n(Sudah dicoba {MAX_ITERATIONS}x - masih error)",
-                            code=code,
-                            explanation="",
-                            st_components=st_components,
-                            iterations_used=MAX_ITERATIONS,
-                            has_error=True,
-                            failed_code=last_failed_code,
-                            validation_notes=validation_notes
-                        )
-                    # Continue to next iteration
-                    logger.info(f"Continuing to iteration {iteration + 1}")
-                    last_failed_code = code  # Track failed code
-                    continue
-                    
+                # Only retry on actual execution errors (not content-based detection)
+                # Content-based issues are handled by prompt instructions
+                
+                # If success (or last iteration with no-data)
+                explanation = ""
+                if explain:
+                    explanation = self._generate_explanation(prompt, output, ui_components)
+                
+                return QAResult(
+                    prompt=prompt,
+                    response=output,
+                    code=code,
+                    explanation=explanation,
+                    ui_components=ui_components,
+                    iterations_used=iteration
+                )
+
             except Exception as e:
-                # Unexpected exception (similar to Data Analyzer)
-                logger.error(f"Unexpected exception in ask(): {e}")
-                validation_notes.append(f"Iterasi {iteration}: Exception - {str(e)}")
-                error_entry = {
+                logger.warning(f"Iteration {iteration} failed: {e}")
+                error_history.append({
                     "iteration": iteration,
-                    "error": f"Exception: {str(e)}",
-                    "code": ""
-                }
-                error_history.append(error_entry)
-                
-                if iteration == MAX_ITERATIONS:
-                    return QAResult(
-                        prompt=prompt,
-                        response=f"❌ Error setelah {MAX_ITERATIONS} attempt: {str(e)}",
-                        code="",
-                        explanation="",
-                        st_components=[],
-                        iterations_used=MAX_ITERATIONS,
-                        has_error=True,
-                        failed_code=last_failed_code,
-                        validation_notes=validation_notes
-                    )
+                    "error": str(e),
+                    "code": code if 'code' in locals() else "",
+                    "approach": f"Attempt {iteration}"
+                })
                 last_failed_code = code if 'code' in locals() else ""
-                continue
         
-        # Fallback (shouldn't reach here)
+        # If all retries failed - provide user-friendly response (technical details in methodology)
+        fallback_response = """Maaf, saya tidak dapat menemukan data yang Anda minta dalam tabel ini.
+
+Beberapa kemungkinan:
+• Data untuk periode atau filter yang diminta mungkin belum tersedia
+• Bisa jadi pertanyaan perlu disampaikan dengan cara berbeda
+
+Silakan coba:
+• Tanyakan data apa saja yang tersedia dalam tabel
+• Atau ulangi pertanyaan dengan kriteria yang berbeda
+
+Saya siap membantu dengan pertanyaan lain tentang data ini!"""
+
         return QAResult(
             prompt=prompt,
-            response="❌ Query gagal setelah semua retry",
-            code="",
-            explanation="",
-            st_components=[],
-            iterations_used=MAX_ITERATIONS,
+            response=fallback_response,
             has_error=True,
             failed_code=last_failed_code,
-            validation_notes=validation_notes
+            validation_notes=[e['error'] for e in error_history]
         )

@@ -27,8 +27,6 @@ class AppSettings:
     default_llm_model: str = DEFAULT_LLM_MODEL
     upload_max_mb: int = UPLOAD_MAX_MB
     
-    # Security
-    app_password: str = "cGFzc3dvcmQgcHVyY2hhc2luZw=="
-    
-    # API Keys
+    # API Keys (from environment)
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    google_api_key: str = os.getenv("GOOGLE_API_KEY", "")

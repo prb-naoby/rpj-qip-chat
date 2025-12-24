@@ -266,7 +266,7 @@ class DatasetCatalog:
             row = conn.execute(
                 """
                 SELECT cs.cache_id, cs.dataset_id, cs.owner_id, cs.sheet_name, cs.display_name,
-                       cs.n_rows, cs.n_cols, cs.cached_at, cs.description, cs.column_descriptions, cs.transform_explanation, d.stored_path
+                       cs.n_rows, cs.n_cols, cs.cached_at, cs.description, cs.column_descriptions, cs.transform_explanation, d.stored_path, d.source_url
                 FROM cached_sheets cs
                 JOIN datasets d ON cs.dataset_id = d.dataset_id
                 WHERE cs.cache_id = ?

@@ -1,7 +1,6 @@
 pandasai>=2.0.0
 pandas>=2.1.0
 numpy>=1.24.0
-streamlit>=1.30.0
 python-dotenv>=1.0.1
 openpyxl>=3.1.2
 PyYAML>=6.0.0
@@ -11,3 +10,15 @@ pyarrow>=14.0.0
 fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0
 openai>=1.55.0
+requests>=2.31.0
+
+# FastAPI Backend
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+bcrypt>=4.0.0
+PyJWT>=2.8.0
+python-multipart>=0.0.6
+httpx>=0.26.0
+
+# Redis
+redis>=5.0.0

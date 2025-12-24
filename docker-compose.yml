@@ -1,25 +1,32 @@
 services:
-  qip-chat:
-    container_name: qip-chat
-    image: ghcr.io/prb-naoby/rpj-qip-chat:latest
+  qip-api:
+    container_name: qip-api
+    build: .
     ports:
-      - "8506:8506"
+      - "1234:1234"
     volumes:
       - data:/app/data
     restart: unless-stopped
     environment:
-      - APP_PASSWORD=${APP_PASSWORD}
-      - DEBUG_MODE=${DEBUG_MODE}
+      - DEBUG_MODE=${DEBUG_MODE:-false}
       - MS_CLIENT_ID=${MS_CLIENT_ID}
       - MS_CLIENT_SECRET=${MS_CLIENT_SECRET}
       - MS_TENANT_ID=${MS_TENANT_ID}
       - ONEDRIVE_DRIVE_ID=${ONEDRIVE_DRIVE_ID}
       - ONEDRIVE_ROOT_PATH=${ONEDRIVE_ROOT_PATH}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - PANDASAI_LLM_MODEL=${PANDASAI_LLM_MODEL}
-      - UPLOAD_MAX_MB=${UPLOAD_MAX_MB}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - PYTHONUNBUFFERED=1
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Jakarta
+      - REDIS_HOST=${REDIS_HOST:-host.docker.internal}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:1234/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - nginx-network
 
