@@ -24,4 +24,4 @@ EXPOSE 1234
 HEALTHCHECK CMD curl --fail http://localhost:1234/health || exit 1
 
 # Run the FastAPI application
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "1234"]
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "1234", "--timeout-keep-alive", "300"]

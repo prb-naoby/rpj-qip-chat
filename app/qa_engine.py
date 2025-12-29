@@ -80,6 +80,7 @@ display(rft_trend.reset_index(), label="RFT per Bulan")
 2. Format angka: 91% bukan 0.91, ribuan dengan titik
 3. Gunakan kalimat lengkap, bahasa Indonesia natural
 4. **JANGAN TAWARKAN LANJUTAN** - Setelah jawaban lengkap, STOP. Jangan print "Ada pertanyaan lanjutan?" atau "Mau saya bantu?"
+5. **IKUTI BAHASA USER** - Jika user bertanya dalam bahasa Inggris, jawab dalam bahasa Inggris. Jika user minta bahasa tertentu (misal "answer in English"), patuhi permintaan tersebut.
 
 ## Aturan Coding - WAJIB IKUTI!
 1. LANGSUNG gunakan variable `df` - JANGAN buat variabel baru untuk DataFrame.
@@ -129,6 +130,36 @@ Saya menganalisis data produksi, mengelompokkan berdasarkan kolom LINE, lalu men
 ---
 
 Ada pertanyaan lanjutan tentang data ini? Silakan tanya!
+"""
+
+
+
+# Prompt to verify if the answer is satisfactory or needs retry
+_VERIFY_SYSTEM = """\
+Kamu adalah Auditor QA yang kritis. Tugasmu adalah mengevaluasi apakah output kode Python berhasil menjawab pertanyaan user atau gagal (misal: data tidak ditemukan).
+
+## Input
+1. Pertanyaan User
+2. Output Eksekusi Python
+
+## Aturan Evaluasi
+Analisis apakah output tersebut:
+1. **BERHASIL**: Menjawab pertanyaan (termasuk jika jawabannya adalah "0" atau angka valid lainnya).
+2. **GAGAL / DATA TIDAK ADA**: Output mengatakan "Data tidak tersedia", "Kosong", "Tidak ditemukan", atau error.
+
+## Output Format
+Jawab HANYA dengan salah satu format berikut:
+
+1. Jika BERHASIL:
+   PASS
+
+2. Jika GAGAL (perlu retry):
+   RETRY: [Saran spesifik untuk percobaan berikutnya]
+
+   Contoh Saran:
+   - "Coba gunakan fuzzy match untuk nama kolom"
+   - "Coba kurangi filter kondisi (misal hapus filter bulan/tahun)"
+   - "Cek apakah nama 'X' ditulis berbeda di data"
 """
 
 
@@ -370,6 +401,28 @@ class PandasAIClient:
         except Exception as e:
             return f"Gagal generate penjelasan: {str(e)}"
 
+    def _verify_response_result(self, prompt: str, output: str) -> str:
+        """
+        Uses LLM to verify if the result implies data not found/failure and suggests a retry.
+        Returns: "PASS" or "RETRY: <advice>"
+        """
+        # Quick check for obvious failures to save token
+        if not output.strip() or "Error" in output:
+            return "RETRY: Output kosong atau error eksekusi."
+
+        try:
+            response = self.client.responses.create(
+                model=self.model_name,
+                instructions=_VERIFY_SYSTEM,
+                input=f"## Pertanyaan User:\n{prompt}\n\n## Output Eksekusi:\n{output}",
+            )
+            return response.output_text.strip()
+        except Exception as e:
+            logger.warning(f"Verification failed: {e}")
+            return "PASS"  # Default to pass if verification fails to avoid infinite loops
+
+
+
     def ask(self, df: DataFrame, prompt: str, explain: bool = True, 
             table_description: str = None, column_descriptions: dict = None,
             history: List[dict] = None) -> QAResult:
@@ -421,14 +474,16 @@ class PandasAIClient:
                 
                 if error_history:
                     # Add error context for retry - instruct to try different approach WITHOUT debug prints
-                    error_context = "\n\n⚠️ RETRY - PENDEKATAN SEBELUMNYA TIDAK BERHASIL:\n"
+                    error_context = "\n\n⚠️ RETRY - PERCOBAAN SEBELUMNYA GAGAL:\n"
                     for idx, err in enumerate(error_history[-2:], 1):
-                        error_context += f"Attempt {err['iteration']}: {err['error'][:200]}\n"
-                    error_context += "\n⚡ COBA PENDEKATAN BERBEDA (JANGAN print debug, langsung jawab):\n"
-                    error_context += "1. Jika filter tidak ada data, tampilkan data yang TERSEDIA (misal: tahun lain)\n"
-                    error_context += "2. Cek nama kolom dengan benar - gunakan EXACT match\n"
-                    error_context += "3. Jika persentase, pastikan sudah dalam format yang benar (0-1 atau 0-100)\n"
-                    error_context += "4. JANGAN print debug atau sample values - langsung berikan analisis\n\n"
+                        error_context += f"Attempt {err['iteration']} Error: {err['error']}\n"
+                        if 'approach' in err and err['approach']:
+                             error_context += f"Saran Perbaikan: {err['approach']}\n"
+                             
+                    error_context += "\n⚡ INSTRUKSI PERBAIKAN (JANGAN print debug, langsung jawab):\n"
+                    error_context += "1. Ikuti saran perbaikan di atas.\n"
+                    error_context += "2. Jika filter terlalu ketat, coba longgarkan.\n"
+                    error_context += "3. Gunakan fuzzy match jika mencari teks.\n"
                     error_context += f"USER QUESTION: {prompt}"
                     current_prompt = history_context + error_context
                 else:
@@ -447,17 +502,35 @@ class PandasAIClient:
                 # Execute Code
                 output, ui_components = _safe_exec(code, df)
                 
-                # Check for execution error
+                # 1. Check for execution error
                 if "❌ Error" in output or "❌ Execution error" in output:
-                    print(f"[DEBUG QA] Iteration {iteration}: Execution error detected, will retry")
+                    print(f"[DEBUG QA] Iteration {iteration}: Execution error detected")
                     raise Exception(output)
                 
-                # Only retry on actual execution errors (not content-based detection)
-                # Content-based issues are handled by prompt instructions
+                # 2. Verify Result Quality with LLM
+                # Only verify if we haven't exhausted retries (no point verifying last attempt if we return it anyway)
+                # But actually we might want to flag it as error for the final return.
+                verification = self._verify_response_result(prompt, output)
                 
-                # If success (or last iteration with no-data)
+                if verification.startswith("RETRY:"):
+                    advice = verification.replace("RETRY:", "").strip()
+                    logger.info(f"Iteration {iteration} result unsatisfiable: {advice}")
+                    
+                    # If this is the last iteration, we accept the result but maybe add a note?
+                    # Or we just let it fall through to the return. 
+                    # The user wants "reiterate until max tries". 
+                    
+                    if iteration < MAX_ITERATIONS:
+                        raise Exception(f"Output unsatisfiable: {advice}")
+                    else:
+                        # Last iteration failed check - stick with it but maybe explain why?
+                        # Or fall through to standard success return which will generate explanation
+                        pass
+
+                # If success (or last iteration forced success)
                 explanation = ""
                 if explain:
+                    # Filter out internal table representations from explanation input to save tokens/confusion
                     explanation = self._generate_explanation(prompt, output, ui_components)
                 
                 return QAResult(
@@ -470,28 +543,33 @@ class PandasAIClient:
                 )
 
             except Exception as e:
-                logger.warning(f"Iteration {iteration} failed: {e}")
+                logger.warning(f"Iteration {iteration} failed/rejected: {e}")
+                
+                # Extract clean error message for context
+                err_msg = str(e)
+                if "Output unsatisfiable:" in err_msg:
+                    err_msg = err_msg.replace("Output unsatisfiable:", "").strip()
+                
                 error_history.append({
                     "iteration": iteration,
-                    "error": str(e),
+                    "error": str(e), # Keep full error for logging
                     "code": code if 'code' in locals() else "",
-                    "approach": f"Attempt {iteration}"
+                    "approach": err_msg # Use the advice as the approach for next time
                 })
                 last_failed_code = code if 'code' in locals() else ""
         
         # If all retries failed - provide user-friendly response (technical details in methodology)
-        fallback_response = """Maaf, saya tidak dapat menemukan data yang Anda minta dalam tabel ini.
+        fallback_response = """Maaf, saya tidak dapat menemukan data yang Anda minta setelah beberapa percobaan.
 
 Beberapa kemungkinan:
-• Data untuk periode atau filter yang diminta mungkin belum tersedia
-• Bisa jadi pertanyaan perlu disampaikan dengan cara berbeda
+• Data spesifik yang dicari memang tidak ada dalam tabel
+• Filter (tahun/bulan/nama) mungkin tidak cocok dengan data
 
-Silakan coba:
-• Tanyakan data apa saja yang tersedia dalam tabel
-• Atau ulangi pertanyaan dengan kriteria yang berbeda
-
-Saya siap membantu dengan pertanyaan lain tentang data ini!"""
-
+Saran saya:
+• Coba tanyakan "Tampilkan sample data" untuk melihat isi tabel
+• Coba kurangi filter (misal: tanya data setahun penuh dulu)
+"""
+        
         return QAResult(
             prompt=prompt,
             response=fallback_response,

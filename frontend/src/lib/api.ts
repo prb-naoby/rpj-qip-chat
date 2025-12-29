@@ -1,10 +1,15 @@
 /**
  * API Client for QIP Data Assistant
- * Axios wrapper for backend communication
+ * Axios wrapper for backend communication via Next.js proxy
+ * 
+ * All requests go through /api/proxy which forwards to the backend server.
+ * This keeps the backend URL hidden from the client and allows the frontend
+ * to be accessed via the same domain as the API.
  */
 import axios from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:1234';
+// Use proxy route - this works both client-side (relative URL) and server-side
+const API_BASE_URL = '/api/proxy';
 
 export const apiClient = axios.create({
     baseURL: API_BASE_URL,
@@ -12,6 +17,7 @@ export const apiClient = axios.create({
         'Content-Type': 'application/json',
     },
 });
+
 
 // Request interceptor to add auth token
 apiClient.interceptors.request.use(
@@ -55,7 +61,7 @@ export const api = {
         formData.append('username', username);
         formData.append('password', password);
 
-        return apiClient.post('/auth/token', formData, {
+        return apiClient.post('/auth/token', formData.toString(), {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         });
     },
@@ -80,8 +86,8 @@ export const api = {
     deleteTable: (tableId: string) =>
         apiClient.delete(`/api/tables/${encodeURIComponent(tableId)}`),
 
-    updateTableDescription: (tableId: string, description: string) =>
-        apiClient.patch(`/api/tables/${encodeURIComponent(tableId)}`, { description }),
+    updateTableDescription: (tableId: string, description: string, displayName?: string) =>
+        apiClient.patch(`/api/tables/${encodeURIComponent(tableId)}`, { description, display_name: displayName }),
 
     rankTables: (question: string) =>
         apiClient.post('/api/tables/rank', { question }),
@@ -108,7 +114,10 @@ export const api = {
     // OneDrive
     getOneDriveStatus: () => apiClient.get('/api/onedrive/status'),
 
-    listOneDriveFiles: () => apiClient.get('/api/onedrive/files'),
+    listOneDriveSubfolders: () => apiClient.get('/api/onedrive/subfolders'),
+
+    listOneDriveFiles: (subfolder?: string) =>
+        apiClient.get('/api/onedrive/files', { params: subfolder ? { subfolder } : {} }),
 
     getOneDriveSheets: (fileId: string, downloadUrl: string) =>
         apiClient.post('/api/onedrive/sheets', { fileId, downloadUrl }),
@@ -122,6 +131,17 @@ export const api = {
             sheet_name: sheetName
         }),
 
+    uploadToOneDrive: (tableId: string, subfolder: string, filename?: string) =>
+        apiClient.post('/api/onedrive/upload', {
+            table_id: tableId,
+            subfolder,
+            filename
+        }),
+
+    // Ingestion
+    ingestAllDocuments: (dryRun: boolean = false) =>
+        apiClient.post('/api/documents/ingest', { dry_run: dryRun }),
+
     // Files
     uploadFile: (file: File) => {
         const formData = new FormData();
@@ -130,11 +150,17 @@ export const api = {
             headers: { 'Content-Type': 'multipart/form-data' },
         });
     },
+
     // AI Data Analysis
-    analyzeFile: (tableId: string, userDescription?: string) =>
+    analyzeFile: (tableId: string, userDescription?: string, metadata?: {
+        selectedFile?: { id: string; name: string; path: string };
+        selectedSheet?: string;
+        displayName?: string;
+    }) =>
         apiClient.post('/api/files/analyze', {
             table_id: tableId,
-            user_description: userDescription
+            user_description: userDescription,
+            metadata: metadata
         }),
 
     previewTransform: (tableId: string, transformCode: string) =>
@@ -193,6 +219,36 @@ export const api = {
             target_table_id: targetTableId,
             user_description: userDescription
         }),
+
+    // Admin - User Management
+    adminListUsers: () => apiClient.get('/api/admin/users'),
+
+    adminCreateUser: (username: string, password: string, role: string = 'user', displayName?: string) =>
+        apiClient.post('/api/admin/users', { username, password, role, display_name: displayName }),
+
+    adminDeleteUser: (username: string) => apiClient.delete(`/api/admin/users/${username}`),
+
+    // Admin - Pending Users
+    adminListPendingUsers: () => apiClient.get('/api/admin/pending-users'),
+
+    adminApproveUser: (userId: number) => apiClient.post(`/api/admin/pending-users/${userId}/approve`),
+
+    adminRejectUser: (userId: number) => apiClient.post(`/api/admin/pending-users/${userId}/reject`),
+
+    // Jobs
+    getJobs: (type?: string) =>
+        apiClient.get('/api/jobs', { params: { type } }),
+
+    getJobStatus: (jobId: string) => apiClient.get(`/api/jobs/${jobId}`),
+
+    deleteJob: (jobId: string) => apiClient.delete(`/api/jobs/${jobId}`),
+
+    clearJobs: (period: 'hour' | 'today' | '3days' | 'all') =>
+        apiClient.delete('/api/jobs/clear', { params: { period } }),
+
+    // Signup (public)
+    signup: (username: string, password: string, email?: string) =>
+        apiClient.post('/auth/signup', { username, password, email }),
 };
 
 export default api;

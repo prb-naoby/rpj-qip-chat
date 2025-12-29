@@ -110,6 +110,97 @@ def list_files(token: str) -> List[dict]:
     return results
 
 
+def list_subfolders(token: str) -> List[dict]:
+    """List immediate subfolders in configured OneDrive root folder."""
+    results: List[dict] = []
+    root_path = config.ONEDRIVE_ROOT_PATH.strip("/")
+    encoded_path = quote(root_path, safe="/")
+    drive_id = config.ONEDRIVE_DRIVE_ID
+
+    # Get root folder
+    root_url = f"{config.GRAPH_BASE_URL}/drives/{drive_id}/root:/{encoded_path}"
+    try:
+        root_item = _graph_get(root_url, token)
+    except Exception:
+        return results
+
+    if "id" not in root_item:
+        return results
+
+    # Get immediate children (only folders)
+    next_url = f"{config.GRAPH_BASE_URL}/drives/{drive_id}/items/{root_item['id']}/children"
+    
+    while next_url:
+        data = _graph_get(next_url, token)
+        for item in data.get("value", []):
+            if item.get("folder"):
+                results.append({
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "path": f"{root_path}/{item.get('name')}",
+                    "childCount": item.get("folder", {}).get("childCount", 0),
+                })
+        next_url = data.get("@odata.nextLink")
+
+    return results
+
+
+def list_files_in_subfolder(token: str, subfolder_name: str) -> List[dict]:
+    """List Excel/CSV files in a specific subfolder."""
+    results: List[dict] = []
+    root_path = config.ONEDRIVE_ROOT_PATH.strip("/")
+    subfolder_path = f"{root_path}/{subfolder_name}"
+    encoded_path = quote(subfolder_path, safe="/")
+    drive_id = config.ONEDRIVE_DRIVE_ID
+
+    # Get subfolder
+    folder_url = f"{config.GRAPH_BASE_URL}/drives/{drive_id}/root:/{encoded_path}"
+    try:
+        folder_item = _graph_get(folder_url, token)
+    except Exception:
+        return results
+
+    if "id" not in folder_item:
+        return results
+
+    # Get files in subfolder (recursive)
+    stack = [(folder_item["id"], subfolder_path)]
+    while stack:
+        parent_id, parent_path = stack.pop()
+        next_url = f"{config.GRAPH_BASE_URL}/drives/{drive_id}/items/{parent_id}/children"
+
+        while next_url:
+            data = _graph_get(next_url, token)
+            for item in data.get("value", []):
+                name = item.get("name", "")
+                item_id = item.get("id")
+                if not item_id:
+                    continue
+
+                child_path = f"{parent_path}/{name}"
+
+                if item.get("folder"):
+                    stack.append((item_id, child_path))
+                    continue
+
+                if not any(name.lower().endswith(ext) for ext in config.SUPPORTED_EXTENSIONS):
+                    continue
+
+                results.append({
+                    "id": item_id,
+                    "name": name,
+                    "path": child_path,
+                    "size": item.get("size", 0),
+                    "downloadUrl": item.get("@microsoft.graph.downloadUrl"),
+                    "webUrl": item.get("webUrl"),
+                    "lastModified": item.get("lastModifiedDateTime"),
+                })
+
+            next_url = data.get("@odata.nextLink")
+
+    return results
+
+
 def get_file_details(token: str, file_id: str) -> dict:
     """Get file details by ID (useful for refreshing download URL)."""
     drive_id = config.ONEDRIVE_DRIVE_ID
@@ -163,12 +254,13 @@ def read_file_to_df(file_bytes: bytes, filename: str, sheet_name: Optional[str] 
         raise ValueError(f"Unsupported file: {filename}")
 
 
-def upload_file(file_path: Path, destination_filename: str) -> dict:
-    """Upload a file to the configured OneDrive root path.
+def upload_file(file_path: Path, destination_filename: str, subfolder: str = None) -> dict:
+    """Upload a file to the configured OneDrive root path or a subfolder.
     
     Args:
         file_path: Local path to the file to upload
         destination_filename: Name of the file in OneDrive
+        subfolder: Optional subfolder name within the root path
         
     Returns:
         dict: API response with file metadata
@@ -177,7 +269,12 @@ def upload_file(file_path: Path, destination_filename: str) -> dict:
     
     # Prepare upload URL
     root_path = config.ONEDRIVE_ROOT_PATH.strip("/")
-    encoded_path = quote(f"{root_path}/{destination_filename}", safe="")
+    if subfolder:
+        target_path = f"{root_path}/{subfolder}/{destination_filename}"
+    else:
+        target_path = f"{root_path}/{destination_filename}"
+    
+    encoded_path = quote(target_path, safe="")
     drive_id = config.ONEDRIVE_DRIVE_ID
     
     upload_url = f"{config.GRAPH_BASE_URL}/drives/{drive_id}/root:/{encoded_path}:/content"
@@ -196,3 +293,4 @@ def upload_file(file_path: Path, destination_filename: str) -> dict:
     resp.raise_for_status()
     
     return resp.json()
+

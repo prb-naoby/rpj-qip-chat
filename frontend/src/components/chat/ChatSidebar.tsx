@@ -67,32 +67,34 @@ export function ChatSidebar({
                                 <h4 className="text-xs font-semibold text-muted-foreground px-2">{group}</h4>
                                 <div className="space-y-1">
                                     {groupSessions.map((session) => (
-                                        <button
+                                        <Button
                                             key={session.id}
+                                            variant="ghost"
                                             onClick={() => onSelectSession(session.id)}
                                             className={cn(
-                                                "w-full text-left px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-between group",
+                                                "w-full justify-between h-auto px-3 py-2 text-sm font-normal group",
                                                 currentSessionId === session.id
                                                     ? "bg-accent/50 text-accent-foreground font-medium"
                                                     : "text-muted-foreground hover:bg-accent/30 hover:text-foreground"
                                             )}
                                         >
-                                            <span className="truncate flex-1 pr-2">
+                                            <span className="truncate text-left flex-1 pr-2">
                                                 {session.title || "New Chat"}
                                             </span>
                                             {onDeleteSession && (
-                                                <div
-                                                    role="button"
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         onDeleteSession(session.id);
                                                     }}
-                                                    className="opacity-0 group-hover:opacity-100 p-1 hover:text-destructive transition-opacity"
+                                                    className="opacity-0 group-hover:opacity-100 h-6 w-6 hover:text-destructive hover:bg-transparent transition-opacity"
                                                 >
                                                     <Trash2 className="h-4 w-4" />
-                                                </div>
+                                                </Button>
                                             )}
-                                        </button>
+                                        </Button>
                                     ))}
                                 </div>
                             </div>

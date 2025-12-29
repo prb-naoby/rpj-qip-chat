@@ -1,4 +1,4 @@
-import { MessageCircle, Cloud, Upload, Settings, History, Star, Bot, Plus, ChevronRight, Settings2, MoreHorizontal, Pencil, Trash2, X } from 'lucide-react';
+import { MessageCircle, Cloud, Upload, Settings, History, Star, Bot, Plus, ChevronRight, Settings2, MoreHorizontal, Pencil, Trash2, X, Shield } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { fetchSessions, setCurrentSession, createSession, deleteSession, renameSession, loadChatHistory } from '@/store/slices/chatSlice';
 import { useEffect, useState } from 'react';
@@ -29,15 +29,16 @@ import {
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import ProfileCard from '@/components/ProfileCard';
 
-type TabType = 'chat' | 'onedrive' | 'upload' | 'manage';
+type TabType = 'chat' | 'onedrive' | 'upload' | 'manage' | 'admin';
 
 interface AppSidebarProps {
     activeTab: TabType;
     onTabChange: (tab: TabType) => void;
     onLogout: () => void;
+    isAdmin?: boolean;
 }
 
-export function AppSidebar({ activeTab, onTabChange, onLogout }: AppSidebarProps) {
+export function AppSidebar({ activeTab, onTabChange, onLogout, isAdmin = false }: AppSidebarProps) {
     const dispatch = useAppDispatch();
     const { sessions, currentSessionId } = useAppSelector((state) => state.chat);
 
@@ -111,175 +112,159 @@ export function AppSidebar({ activeTab, onTabChange, onLogout }: AppSidebarProps
             <SidebarSeparator />
 
             <SidebarContent>
-                {/* Workspace Group */}
+                {/* AI Assistant Group */}
                 <SidebarGroup>
-                    <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+                    <SidebarGroupLabel>AI Assistant</SidebarGroupLabel>
                     <SidebarGroupContent>
                         <SidebarMenu>
-                            {/* Workspace Collapsible */}
-                            <Collapsible asChild defaultOpen className="group/collapsible">
+                            {/* New Chat Action */}
+                            <SidebarMenuItem>
+                                <SidebarMenuButton onClick={handleNewChat} isActive={activeTab === 'chat' && !currentSessionId}>
+                                    <Plus className="size-4" />
+                                    <span>New Chat</span>
+                                </SidebarMenuButton>
+                            </SidebarMenuItem>
+
+                            {/* Recent Sessions (History) */}
+                            <Collapsible asChild defaultOpen className="group/history">
                                 <SidebarMenuItem>
                                     <CollapsibleTrigger asChild>
-                                        <SidebarMenuButton tooltip="AI Workspace" isActive={activeTab === 'chat'}>
-                                            <Bot className="size-4" />
-                                            <span>AI Assistant</span>
-                                            <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+                                        <SidebarMenuButton>
+                                            <History className="size-4" />
+                                            <span>Recent Sessions</span>
+                                            <ChevronRight className="ml-auto size-4 transition-transform duration-200 group-data-[state=open]/history:rotate-90" />
                                         </SidebarMenuButton>
                                     </CollapsibleTrigger>
                                     <CollapsibleContent>
                                         <SidebarMenuSub>
-                                            {/* Action: New Session */}
-                                            <SidebarMenuSubItem>
-                                                <SidebarMenuSubButton onClick={handleNewChat}>
-                                                    <Plus className="mr-2 size-4" />
-                                                    <span>New Create</span>
-                                                </SidebarMenuSubButton>
-                                            </SidebarMenuSubItem>
-
-                                            {/* Recent Sessions (History) */}
-                                            <Collapsible asChild className="group/history">
-                                                <SidebarMenuSubItem>
-                                                    <CollapsibleTrigger asChild>
-                                                        <SidebarMenuSubButton>
-                                                            <History className="mr-2 size-4" />
-                                                            <span>Recent Sessions</span>
-                                                            <ChevronRight className="ml-auto size-3 transition-transform duration-200 group-data-[state=open]/history:rotate-90" />
-                                                        </SidebarMenuSubButton>
-                                                    </CollapsibleTrigger>
-                                                    <CollapsibleContent>
-                                                        <SidebarMenuSub>
-                                                            <AnimatePresence>
-                                                                {sessions.length === 0 ? (
-                                                                    <motion.div
-                                                                        initial={{ opacity: 0 }}
-                                                                        animate={{ opacity: 1 }}
-                                                                        exit={{ opacity: 0 }}
-                                                                        className="px-4 py-2 text-xs text-muted-foreground italic"
-                                                                    >
-                                                                        No history yet
-                                                                    </motion.div>
-                                                                ) : (
-                                                                    sessions.slice(0, 5).map(session => (
-                                                                        <motion.div
-                                                                            key={session.id}
-                                                                            initial={{ opacity: 0, x: -10 }}
-                                                                            animate={{ opacity: 1, x: 0 }}
-                                                                            exit={{ opacity: 0, height: 0 }}
-                                                                            transition={{ duration: 0.2 }}
-                                                                        >
-                                                                            <SidebarMenuSubItem className="relative group/item">
-                                                                                <SidebarMenuSubButton
-                                                                                    onClick={() => handleLoadSession(session.id)}
-                                                                                    isActive={currentSessionId === session.id && activeTab === 'chat'}
-                                                                                    className="cursor-pointer pr-8"
-                                                                                >
-                                                                                    <span className="truncate">{session.title}</span>
-                                                                                </SidebarMenuSubButton>
-                                                                                <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/item:opacity-100 transition-opacity">
-                                                                                    <DropdownMenu>
-                                                                                        <DropdownMenuTrigger asChild>
-                                                                                            <Button
-                                                                                                variant="ghost"
-                                                                                                size="icon"
-                                                                                                className="h-6 w-6"
-                                                                                                onClick={(e) => e.stopPropagation()}
-                                                                                            >
-                                                                                                <MoreHorizontal className="h-4 w-4" />
-                                                                                            </Button>
-                                                                                        </DropdownMenuTrigger>
-                                                                                        <DropdownMenuContent align="end">
-                                                                                            <DropdownMenuItem onClick={(e) => startRename(session.id, session.title, e)}>
-                                                                                                <Pencil className="mr-2 h-4 w-4" />
-                                                                                                Rename
-                                                                                            </DropdownMenuItem>
-                                                                                            <DropdownMenuItem
-                                                                                                onClick={(e) => startDelete(session.id, e)}
-                                                                                                className="text-destructive focus:text-destructive"
-                                                                                            >
-                                                                                                <Trash2 className="mr-2 h-4 w-4" />
-                                                                                                Delete
-                                                                                            </DropdownMenuItem>
-                                                                                        </DropdownMenuContent>
-                                                                                    </DropdownMenu>
-                                                                                </div>
-                                                                            </SidebarMenuSubItem>
-                                                                        </motion.div>
-                                                                    ))
-                                                                )}
-                                                            </AnimatePresence>
-                                                            {sessions.length > 5 && !showAllSessions && (
-                                                                <SidebarMenuSubItem>
-                                                                    <Button
-                                                                        variant="ghost"
-                                                                        size="sm"
-                                                                        onClick={() => setShowAllSessions(true)}
-                                                                        className="w-full justify-start text-xs text-primary hover:text-primary h-7 px-2"
-                                                                    >
-                                                                        + {sessions.length - 5} more...
-                                                                    </Button>
-                                                                </SidebarMenuSubItem>
-                                                            )}
-                                                            {showAllSessions && sessions.slice(5).map(session => (
-                                                                <motion.div
-                                                                    key={session.id}
-                                                                    initial={{ opacity: 0, x: -10 }}
-                                                                    animate={{ opacity: 1, x: 0 }}
-                                                                    transition={{ duration: 0.2 }}
+                                            <AnimatePresence>
+                                                {sessions.length === 0 ? (
+                                                    <motion.div
+                                                        initial={{ opacity: 0 }}
+                                                        animate={{ opacity: 1 }}
+                                                        exit={{ opacity: 0 }}
+                                                        className="px-4 py-2 text-xs text-muted-foreground italic h-8 flex items-center"
+                                                    >
+                                                        No history yet
+                                                    </motion.div>
+                                                ) : (
+                                                    sessions.slice(0, 5).map(session => (
+                                                        <motion.div
+                                                            key={session.id}
+                                                            initial={{ opacity: 0, x: -10 }}
+                                                            animate={{ opacity: 1, x: 0 }}
+                                                            exit={{ opacity: 0, height: 0 }}
+                                                            transition={{ duration: 0.2 }}
+                                                        >
+                                                            <SidebarMenuSubItem className="relative group/item">
+                                                                <SidebarMenuSubButton
+                                                                    onClick={() => handleLoadSession(session.id)}
+                                                                    isActive={currentSessionId === session.id && activeTab === 'chat'}
+                                                                    className="cursor-pointer pr-8"
                                                                 >
-                                                                    <SidebarMenuSubItem className="relative group/item">
-                                                                        <SidebarMenuSubButton
-                                                                            onClick={() => handleLoadSession(session.id)}
-                                                                            isActive={currentSessionId === session.id && activeTab === 'chat'}
-                                                                            className="cursor-pointer pr-8"
-                                                                        >
-                                                                            <span className="truncate">{session.title}</span>
-                                                                        </SidebarMenuSubButton>
-                                                                        <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/item:opacity-100 transition-opacity">
-                                                                            <DropdownMenu>
-                                                                                <DropdownMenuTrigger asChild>
-                                                                                    <Button
-                                                                                        variant="ghost"
-                                                                                        size="icon"
-                                                                                        className="h-6 w-6"
-                                                                                        onClick={(e) => e.stopPropagation()}
-                                                                                    >
-                                                                                        <MoreHorizontal className="h-4 w-4" />
-                                                                                    </Button>
-                                                                                </DropdownMenuTrigger>
-                                                                                <DropdownMenuContent align="end">
-                                                                                    <DropdownMenuItem onClick={(e) => startRename(session.id, session.title, e)}>
-                                                                                        <Pencil className="mr-2 h-4 w-4" />
-                                                                                        Rename
-                                                                                    </DropdownMenuItem>
-                                                                                    <DropdownMenuItem
-                                                                                        onClick={(e) => startDelete(session.id, e)}
-                                                                                        className="text-destructive focus:text-destructive"
-                                                                                    >
-                                                                                        <Trash2 className="mr-2 h-4 w-4" />
-                                                                                        Delete
-                                                                                    </DropdownMenuItem>
-                                                                                </DropdownMenuContent>
-                                                                            </DropdownMenu>
-                                                                        </div>
-                                                                    </SidebarMenuSubItem>
-                                                                </motion.div>
-                                                            ))}
-                                                            {showAllSessions && sessions.length > 5 && (
-                                                                <SidebarMenuSubItem>
+                                                                    <span className="truncate">{session.title}</span>
+                                                                </SidebarMenuSubButton>
+                                                                <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/item:opacity-100 transition-opacity">
+                                                                    <DropdownMenu>
+                                                                        <DropdownMenuTrigger asChild>
+                                                                            <Button
+                                                                                variant="ghost"
+                                                                                size="icon"
+                                                                                className="h-6 w-6"
+                                                                                onClick={(e) => e.stopPropagation()}
+                                                                            >
+                                                                                <MoreHorizontal className="h-4 w-4" />
+                                                                            </Button>
+                                                                        </DropdownMenuTrigger>
+                                                                        <DropdownMenuContent align="end">
+                                                                            <DropdownMenuItem onClick={(e) => startRename(session.id, session.title, e)}>
+                                                                                <Pencil className="mr-2 h-4 w-4" />
+                                                                                Rename
+                                                                            </DropdownMenuItem>
+                                                                            <DropdownMenuItem
+                                                                                onClick={(e) => startDelete(session.id, e)}
+                                                                                className="text-destructive focus:text-destructive"
+                                                                            >
+                                                                                <Trash2 className="mr-2 h-4 w-4" />
+                                                                                Delete
+                                                                            </DropdownMenuItem>
+                                                                        </DropdownMenuContent>
+                                                                    </DropdownMenu>
+                                                                </div>
+                                                            </SidebarMenuSubItem>
+                                                        </motion.div>
+                                                    ))
+                                                )}
+                                            </AnimatePresence>
+                                            {sessions.length > 5 && !showAllSessions && (
+                                                <SidebarMenuSubItem>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => setShowAllSessions(true)}
+                                                        className="w-full justify-start text-xs text-primary hover:text-primary h-7 px-2"
+                                                    >
+                                                        + {sessions.length - 5} more...
+                                                    </Button>
+                                                </SidebarMenuSubItem>
+                                            )}
+                                            {showAllSessions && sessions.slice(5).map(session => (
+                                                <motion.div
+                                                    key={session.id}
+                                                    initial={{ opacity: 0, x: -10 }}
+                                                    animate={{ opacity: 1, x: 0 }}
+                                                    transition={{ duration: 0.2 }}
+                                                >
+                                                    <SidebarMenuSubItem className="relative group/item">
+                                                        <SidebarMenuSubButton
+                                                            onClick={() => handleLoadSession(session.id)}
+                                                            isActive={currentSessionId === session.id && activeTab === 'chat'}
+                                                            className="cursor-pointer pr-8"
+                                                        >
+                                                            <span className="truncate">{session.title}</span>
+                                                        </SidebarMenuSubButton>
+                                                        <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/item:opacity-100 transition-opacity">
+                                                            <DropdownMenu>
+                                                                <DropdownMenuTrigger asChild>
                                                                     <Button
                                                                         variant="ghost"
-                                                                        size="sm"
-                                                                        onClick={() => setShowAllSessions(false)}
-                                                                        className="w-full justify-start text-xs text-muted-foreground h-7 px-2"
+                                                                        size="icon"
+                                                                        className="h-6 w-6"
+                                                                        onClick={(e) => e.stopPropagation()}
                                                                     >
-                                                                        Show less
+                                                                        <MoreHorizontal className="h-4 w-4" />
                                                                     </Button>
-                                                                </SidebarMenuSubItem>
-                                                            )}
-                                                        </SidebarMenuSub>
-                                                    </CollapsibleContent>
+                                                                </DropdownMenuTrigger>
+                                                                <DropdownMenuContent align="end">
+                                                                    <DropdownMenuItem onClick={(e) => startRename(session.id, session.title, e)}>
+                                                                        <Pencil className="mr-2 h-4 w-4" />
+                                                                        Rename
+                                                                    </DropdownMenuItem>
+                                                                    <DropdownMenuItem
+                                                                        onClick={(e) => startDelete(session.id, e)}
+                                                                        className="text-destructive focus:text-destructive"
+                                                                    >
+                                                                        <Trash2 className="mr-2 h-4 w-4" />
+                                                                        Delete
+                                                                    </DropdownMenuItem>
+                                                                </DropdownMenuContent>
+                                                            </DropdownMenu>
+                                                        </div>
+                                                    </SidebarMenuSubItem>
+                                                </motion.div>
+                                            ))}
+                                            {showAllSessions && sessions.length > 5 && (
+                                                <SidebarMenuSubItem>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => setShowAllSessions(false)}
+                                                        className="w-full justify-start text-xs text-muted-foreground h-7 px-2"
+                                                    >
+                                                        Show less
+                                                    </Button>
                                                 </SidebarMenuSubItem>
-                                            </Collapsible>
+                                            )}
                                         </SidebarMenuSub>
                                     </CollapsibleContent>
                                 </SidebarMenuItem>
@@ -291,39 +276,49 @@ export function AppSidebar({ activeTab, onTabChange, onLogout }: AppSidebarProps
                 <SidebarSeparator />
 
                 {/* Data Group */}
-                <SidebarGroup>
-                    <SidebarGroupLabel>Data Sources</SidebarGroupLabel>
-                    <SidebarGroupContent>
-                        <SidebarMenu>
-                            <SidebarMenuItem>
-                                <SidebarMenuButton onClick={() => onTabChange('onedrive')} isActive={activeTab === 'onedrive'} tooltip="Browse OneDrive">
-                                    <Cloud className="size-4" />
-                                    <span>OneDrive</span>
-                                </SidebarMenuButton>
-                            </SidebarMenuItem>
-                            <SidebarMenuItem>
-                                <SidebarMenuButton onClick={() => onTabChange('upload')} isActive={activeTab === 'upload'} tooltip="Upload Files">
-                                    <Upload className="size-4" />
-                                    <span>Upload</span>
-                                </SidebarMenuButton>
-                            </SidebarMenuItem>
-                        </SidebarMenu>
-                    </SidebarGroupContent>
-                </SidebarGroup>
+                {isAdmin && (
+                    <SidebarGroup>
+                        <SidebarGroupLabel>Data Sources</SidebarGroupLabel>
+                        <SidebarGroupContent>
+                            <SidebarMenu>
+                                <SidebarMenuItem>
+                                    <SidebarMenuButton onClick={() => onTabChange('onedrive')} isActive={activeTab === 'onedrive'} tooltip="Browse OneDrive">
+                                        <Cloud className="size-4" />
+                                        <span>OneDrive</span>
+                                    </SidebarMenuButton>
+                                </SidebarMenuItem>
+                                <SidebarMenuItem>
+                                    <SidebarMenuButton onClick={() => onTabChange('upload')} isActive={activeTab === 'upload'} tooltip="Upload Files">
+                                        <Upload className="size-4" />
+                                        <span>Upload</span>
+                                    </SidebarMenuButton>
+                                </SidebarMenuItem>
+                            </SidebarMenu>
+                        </SidebarGroupContent>
+                    </SidebarGroup>
+                )}
 
-                <SidebarGroup>
-                    <SidebarGroupLabel>Admin</SidebarGroupLabel>
-                    <SidebarGroupContent>
-                        <SidebarMenu>
-                            <SidebarMenuItem>
-                                <SidebarMenuButton onClick={() => onTabChange('manage')} isActive={activeTab === 'manage'} tooltip="Manage Tables">
-                                    <Settings className="size-4" />
-                                    <span>Manage</span>
-                                </SidebarMenuButton>
-                            </SidebarMenuItem>
-                        </SidebarMenu>
-                    </SidebarGroupContent>
-                </SidebarGroup>
+                {isAdmin && (
+                    <SidebarGroup>
+                        <SidebarGroupLabel>Admin</SidebarGroupLabel>
+                        <SidebarGroupContent>
+                            <SidebarMenu>
+                                <SidebarMenuItem>
+                                    <SidebarMenuButton onClick={() => onTabChange('manage')} isActive={activeTab === 'manage'} tooltip="Manage Tables">
+                                        <Settings className="size-4" />
+                                        <span>Manage</span>
+                                    </SidebarMenuButton>
+                                </SidebarMenuItem>
+                                <SidebarMenuItem>
+                                    <SidebarMenuButton onClick={() => onTabChange('admin')} isActive={activeTab === 'admin'} tooltip="Admin Panel">
+                                        <Shield className="size-4" />
+                                        <span>Admin Panel</span>
+                                    </SidebarMenuButton>
+                                </SidebarMenuItem>
+                            </SidebarMenu>
+                        </SidebarGroupContent>
+                    </SidebarGroup>
+                )}
 
             </SidebarContent>
 

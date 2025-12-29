@@ -19,12 +19,14 @@ import ChatTab from '@/components/tabs/ChatTab';
 import OneDriveTab from '@/components/tabs/OneDriveTab';
 import UploadTab from '@/components/tabs/UploadTab';
 import ManageTab from '@/components/tabs/ManageTab';
+import AdminPanel from '@/components/AdminPanel';
 
 export default function HomePage() {
   const router = useRouter();
   const dispatch = useAppDispatch();
-  const { isAuthenticated, isLoading } = useAppSelector((state) => state.auth);
+  const { isAuthenticated, isLoading, user } = useAppSelector((state) => state.auth);
   const [activeTab, setActiveTab] = useState<TabType>('chat');
+  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -75,6 +77,10 @@ export default function HomePage() {
         return <UploadTab />;
       case 'manage':
         return <ManageTab />;
+      case 'admin':
+        return <AdminPanel />;
+      default:
+        return <ChatTab />;
     }
   };
 
@@ -85,6 +91,7 @@ export default function HomePage() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onLogout={handleLogout}
+          isAdmin={isAdmin}
         />
         <SidebarInset>
           <header className="flex h-14 items-center gap-4 border-b border-border px-4 bg-background">
@@ -94,6 +101,7 @@ export default function HomePage() {
               {activeTab === 'onedrive' && '☁️ OneDrive'}
               {activeTab === 'upload' && '⬆️ Upload'}
               {activeTab === 'manage' && '🛠️ Manage Tables'}
+              {activeTab === 'admin' && '🛡️ Admin Panel'}
             </h1>
           </header>
           <main className="flex-1 p-2 md:p-4 lg:p-6 bg-background" role="main">

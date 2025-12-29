@@ -1,16 +1,15 @@
 from __future__ import annotations
 import os
-import google.generativeai as genai
+from google import genai
 from api import chat_service
 
 def init_gemini_client():
-    """Initialize the Google GenAI client."""
+    """Initialize the Google GenAI client (v1 SDK)."""
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        # print("Warning: GOOGLE_API_KEY not found.") # Reduce log noise
         return None
-    genai.configure(api_key=api_key)
-    return genai
+    # v1 SDK uses Client(api_key=...)
+    return genai.Client(api_key=api_key)
 
 def generate_chat_title(
     first_question: str, 
@@ -27,8 +26,7 @@ def generate_chat_title(
         if not client:
             return "New Chat"
 
-        model = client.GenerativeModel("gemini-1.5-flash")
-        
+        # v1 SDK: client.models.generate_content
         prompt = f"""
         Generate a very short, concise title (max 4-5 words) for a chat session that starts with:
         User: {first_question}
@@ -37,7 +35,10 @@ def generate_chat_title(
         The title should summarize the user's intent. Do not use quotes.
         """
         
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt
+        )
         title = response.text.strip()
         
         # Clean up title

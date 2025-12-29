@@ -131,6 +131,13 @@ export default function LoginPage() {
                                 </Tooltip>
                             </TooltipProvider>
                         </form>
+
+                        <div className="mt-4 text-center text-sm text-muted-foreground">
+                            Belum punya akun?{' '}
+                            <a href="/signup" className="text-primary hover:underline">
+                                Daftar di sini
+                            </a>
+                        </div>
                     </CardContent>
                 </Card>
             </motion.div>

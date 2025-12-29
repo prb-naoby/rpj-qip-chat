@@ -291,6 +291,7 @@ class DatasetCatalog:
         description: Optional[str] = None,
         column_descriptions: Optional[dict] = None,
         transform_explanation: Optional[str] = None,
+        display_name: Optional[str] = None,
     ) -> bool:
         """Update metadata for a cached sheet."""
         col_desc_json = json.dumps(column_descriptions) if column_descriptions else None
@@ -311,6 +312,10 @@ class DatasetCatalog:
             if transform_explanation is not None:
                 updates.append("transform_explanation = ?")
                 params.append(transform_explanation)
+
+            if display_name is not None:
+                updates.append("display_name = ?")
+                params.append(display_name)
             
             if not updates:
                 return False

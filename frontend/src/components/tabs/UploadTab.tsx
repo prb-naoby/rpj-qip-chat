@@ -31,10 +31,12 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { Spinner } from '@/components/ui/spinner';
-import { CheckCircle, Wand2, Save, RefreshCw, Code, AlertTriangle, ChevronDown, X } from 'lucide-react';
+import { CheckCircle, Wand2, Save, RefreshCw, Code, AlertTriangle, ChevronDown, X, Upload, Cloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 import { DataPreview } from '@/components/DataPreview';
+import { useUserJobs } from '@/hooks/useUserJobs';
+import { JobStatusList } from '@/components/JobStatusList';
 
 interface AnalysisResult {
     summary: string;
@@ -57,6 +59,13 @@ export default function UploadTab() {
     const dispatch = useAppDispatch();
     const [isUploading, setIsUploading] = useState(false);
     const [dragOver, setDragOver] = useState(false);
+
+    // Job polling
+    const { jobs, isLoading: isJobsLoading, refresh: refreshJobs } = useUserJobs();
+
+    // activeJobId for auto-loading results
+    const [activeJobId, setActiveJobId] = useState<string | null>(null);
+
 
     // Preview state (original data)
     const [previewTableId, setPreviewTableId] = useState<string | null>(null);
@@ -86,6 +95,13 @@ export default function UploadTab() {
 
     // Get existing tables for append target selection
     const tables = useAppSelector((state: RootState) => state.tables.tables);
+
+    // OneDrive upload state
+    const [oneDriveSubfolders, setOneDriveSubfolders] = useState<{ id: string, name: string, childCount: number }[]>([]);
+    const [selectedOneDriveFolder, setSelectedOneDriveFolder] = useState<string>('__root__');
+    const [uploadFilename, setUploadFilename] = useState<string>('');
+    const [isUploadingToOneDrive, setIsUploadingToOneDrive] = useState(false);
+    const [isLoadingFolders, setIsLoadingFolders] = useState(false);
 
     useEffect(() => {
         dispatch(fetchTables());
@@ -149,6 +165,58 @@ export default function UploadTab() {
         setDragOver(false);
     }, []);
 
+    const handleJobClick = (job: any) => {
+        if (!job.metadata) return;
+
+        // Restore preview table
+        if (job.metadata.previewTableId) {
+            setPreviewTableId(job.metadata.previewTableId);
+            setUploadedFileName(job.metadata.displayName || 'Restored Job');
+        }
+
+        // Restore analysis result
+        if (job.result) {
+            setAnalysisResult({
+                summary: job.result.summary || '',
+                issues_found: job.result.issues_found || [],
+                transform_code: job.result.transform_code || '',
+                needs_transform: job.result.needs_transform || false,
+                validation_notes: job.result.validation_notes || [],
+                explanation: job.result.explanation || '',
+                preview_data: job.result.preview_data || [],
+                has_error: job.result.has_error || false
+            });
+
+            // Restore transformed preview
+            if (job.result.preview_data && job.result.preview_columns) {
+                setTransformedPreview({
+                    columns: job.result.preview_columns,
+                    preview_data: job.result.preview_data
+                });
+            }
+        }
+
+        setIsOriginalPreviewExpanded(false);
+        toast.success('State restored from completed job');
+    };
+
+    // Auto-load completed job result
+    useEffect(() => {
+        if (!activeJobId) return;
+
+        const job = jobs.find(j => j.id === activeJobId);
+        if (job) {
+            if (job.status === 'completed') {
+                handleJobClick(job);
+                setActiveJobId(null);
+                toast.success('✨ Job completed! Result loaded.');
+            } else if (job.status === 'failed') {
+                setActiveJobId(null);
+                toast.error(`Job failed: ${job.error}`);
+            }
+        }
+    }, [activeJobId, jobs]);
+
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
@@ -164,36 +232,19 @@ export default function UploadTab() {
         setAnalysisResult(null);
 
         try {
-            // Step 1: Analyze file
-            const analysisRes = await api.analyzeFile(previewTableId, transformInput || undefined);
-            const result = analysisRes.data;
+            // Step 1: Analyze file (starts job)
+            const metadata = {
+                displayName: uploadedFileName.replace(/\.(xlsx|xls|csv)$/i, ''),
+                previewTableId: previewTableId
+            };
 
-            if (result.has_error) {
-                toast.error(`Analysis failed: ${result.explanation}`);
-                setIsAnalyzing(false);
-                return;
+            const analysisRes = await api.analyzeFile(previewTableId, transformInput || undefined, metadata);
+
+            if (analysisRes.data.job_id) {
+                setActiveJobId(analysisRes.data.job_id);
+                refreshJobs();
+                toast.info("🚀 Analysis job started...");
             }
-
-            setAnalysisResult(result);
-
-            // Step 2: Preview the transform
-            if (result.transform_code) {
-                const previewRes = await api.previewTransform(previewTableId, result.transform_code);
-                if (previewRes.data.error) {
-                    toast.error(`Transform preview failed: ${previewRes.data.error}`);
-                } else {
-                    setTransformedPreview({
-                        columns: previewRes.data.columns,
-                        preview_data: previewRes.data.preview_data
-                    });
-                }
-            }
-
-            // Collapse original preview to focus on transformed data
-            setIsOriginalPreviewExpanded(false);
-
-            // Show analysis summary as toast (transient notification)
-            toast.success(`✨ ${result.summary}`);
         } catch (error: any) {
             toast.error(`Analysis failed: ${error.response?.data?.detail || error.message}`);
         } finally {
@@ -212,26 +263,14 @@ export default function UploadTab() {
                 analysisResult.transform_code,
                 feedbackInput
             );
-            const refined = refineRes.data;
 
-            setAnalysisResult(refined);
             setFeedbackInput('');
 
-            // Preview the refined transform
-            if (refined.transform_code) {
-                const previewRes = await api.previewTransform(previewTableId, refined.transform_code);
-                if (previewRes.data.error) {
-                    toast.error(`Transform preview failed: ${previewRes.data.error}`);
-                    setTransformedPreview(null);
-                } else {
-                    setTransformedPreview({
-                        columns: previewRes.data.columns,
-                        preview_data: previewRes.data.preview_data
-                    });
-                }
+            if (refineRes.data.job_id) {
+                setActiveJobId(refineRes.data.job_id);
+                refreshJobs();
+                toast.success("🔄 Refinement job started! Check the queue.");
             }
-
-            toast.success("🔄 Code refined by AI!");
         } catch (error: any) {
             toast.error(`Refinement failed: ${error.response?.data?.detail || error.message}`);
         } finally {
@@ -263,6 +302,45 @@ export default function UploadTab() {
             toast.error(`Save failed: ${error.response?.data?.detail || error.message}`);
         } finally {
             setIsSaving(false);
+        }
+    };
+
+    const loadOneDriveFolders = async () => {
+        setIsLoadingFolders(true);
+        try {
+            const response = await api.listOneDriveSubfolders();
+            setOneDriveSubfolders(response.data);
+            toast.success(`📁 ${response.data.length} folder ditemukan`);
+        } catch (error: any) {
+            toast.error(`Gagal memuat folder: ${error.response?.data?.detail || error.message}`);
+        } finally {
+            setIsLoadingFolders(false);
+        }
+    };
+
+    const handleUploadToOneDrive = async () => {
+        if (!previewTableId) {
+            toast.error('No data to upload');
+            return;
+        }
+
+        setIsUploadingToOneDrive(true);
+        try {
+            const subfolder = selectedOneDriveFolder === '__root__' ? '' : selectedOneDriveFolder;
+            const response = await api.uploadToOneDrive(
+                previewTableId,
+                subfolder,
+                uploadFilename || undefined
+            );
+
+            if (response.data.success) {
+                toast.success(`✅ ${response.data.message}`);
+                setUploadFilename('');
+            }
+        } catch (error: any) {
+            toast.error(`Upload gagal: ${error.response?.data?.detail || error.message}`);
+        } finally {
+            setIsUploadingToOneDrive(false);
         }
     };
 
@@ -309,6 +387,14 @@ export default function UploadTab() {
 
     return (
         <div className="space-y-4">
+            <JobStatusList
+                jobs={jobs}
+                isLoading={isJobsLoading}
+                title="Active Jobs"
+                className="mb-4"
+                onJobsChange={refreshJobs}
+                onJobClick={handleJobClick}
+            />
             {/* Upload Area */}
             <Card className="bg-card border-border">
                 <CardHeader>
@@ -540,6 +626,76 @@ export default function UploadTab() {
                             </CardContent>
                         </Card>
                     )}
+
+                    {/* Upload to OneDrive Section */}
+                    <Card className="bg-card border-border">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-base flex items-center gap-2">
+                                <Cloud className="w-4 h-4 text-blue-500" />
+                                Upload ke OneDrive
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="flex gap-2 items-end">
+                                <div className="flex-1 space-y-1">
+                                    <Label className="text-sm">📁 Pilih Folder Tujuan:</Label>
+                                    <Select
+                                        value={selectedOneDriveFolder}
+                                        onValueChange={setSelectedOneDriveFolder}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Pilih folder..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="__root__">
+                                                📁 Root (Parent Folder)
+                                            </SelectItem>
+                                            {oneDriveSubfolders.map((folder) => (
+                                                <SelectItem key={folder.id} value={folder.name}>
+                                                    📁 {folder.name} ({folder.childCount} items)
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <Button
+                                    onClick={loadOneDriveFolders}
+                                    disabled={isLoadingFolders}
+                                    variant="outline"
+                                    size="sm"
+                                >
+                                    {isLoadingFolders ? <><Spinner />Loading...</> : '🔄 Load Folders'}
+                                </Button>
+                            </div>
+
+                            <div className="space-y-1">
+                                <Label className="text-sm">📄 Nama File (opsional):</Label>
+                                <Input
+                                    placeholder="Kosongkan untuk gunakan nama default..."
+                                    value={uploadFilename}
+                                    onChange={(e) => setUploadFilename(e.target.value)}
+                                />
+                            </div>
+
+                            <Button
+                                onClick={handleUploadToOneDrive}
+                                disabled={isUploadingToOneDrive || !previewTableId}
+                                className="gap-2"
+                            >
+                                {isUploadingToOneDrive ? (
+                                    <>
+                                        <Spinner />
+                                        Uploading...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Upload className="w-4 h-4" />
+                                        ☁️ Upload ke OneDrive
+                                    </>
+                                )}
+                            </Button>
+                        </CardContent>
+                    </Card>
                 </div>
             )}
 

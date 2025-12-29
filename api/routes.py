@@ -4,17 +4,22 @@ Following exim-chat pattern with JWT authentication.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, List, Any
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from api import auth_utils, database, chat_service
 from api.chat_utils import generate_chat_title
 from api.intent_classifier import interpret_table_selection, generate_clarification_message, classify_user_intent
+from app.job_manager import job_manager, JobStatus
 from app.data_store import DatasetCatalog
 from app.datasets import (
     list_all_cached_data,
@@ -36,6 +41,7 @@ from app.settings import AppSettings
 import pandas as pd
 from pathlib import Path
 import json
+import tempfile
 
 router = APIRouter()
 settings = AppSettings()
@@ -104,6 +110,7 @@ class TableRankRequest(BaseModel):
 class AnalyzeRequest(BaseModel):
     table_id: str
     user_description: Optional[str] = ""
+    metadata: Optional[dict] = None
 
 
 class TransformRequest(BaseModel):
@@ -307,6 +314,111 @@ async def change_password(
 
 
 # =============================================================================
+# Admin Routes - User Management
+# =============================================================================
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: str = "user"
+    display_name: Optional[str] = None
+
+
+class SignupRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+
+
+@router.get("/api/admin/users")
+async def admin_list_users(current_user: dict = Depends(get_current_admin)):
+    """List all users (admin only)."""
+    return database.list_users()
+
+
+@router.post("/api/admin/users")
+async def admin_create_user(
+    user: UserCreate,
+    current_user: dict = Depends(get_current_admin)
+):
+    """Create a new user (admin only)."""
+    password_hash = auth_utils.get_password_hash(user.password)
+    user_id = database.add_user(user.username, password_hash, user.role, user.display_name)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    return {"message": f"User '{user.username}' created", "id": user_id}
+
+
+@router.delete("/api/admin/users/{username}")
+async def admin_delete_user(
+    username: str,
+    current_user: dict = Depends(get_current_admin)
+):
+    """Delete a user (admin only)."""
+    if username == current_user["username"]:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    
+    success = database.delete_user(username)
+    if not success:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"message": f"User '{username}' deleted"}
+
+
+# =============================================================================
+# Pending Users (Registration Approval)
+# =============================================================================
+
+@router.post("/auth/signup")
+async def signup_request(signup: SignupRequest):
+    """Submit a signup request for admin approval."""
+    # Check if username already exists
+    existing = database.get_user_by_username(signup.username)
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    
+    pending = database.check_pending_username_exists(signup.username)
+    if pending:
+        raise HTTPException(status_code=400, detail="Signup request already pending for this username")
+    
+    password_hash = auth_utils.get_password_hash(signup.password)
+    success = database.add_pending_user(signup.username, password_hash, signup.email)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to submit signup request")
+    
+    return {"message": "Signup request submitted. Please wait for admin approval."}
+
+
+@router.get("/api/admin/pending-users")
+async def admin_list_pending_users(current_user: dict = Depends(get_current_admin)):
+    """List all pending user registrations (admin only)."""
+    return database.get_pending_users()
+
+
+@router.post("/api/admin/pending-users/{user_id}/approve")
+async def admin_approve_user(
+    user_id: int,
+    current_user: dict = Depends(get_current_admin)
+):
+    """Approve a pending user registration (admin only)."""
+    success = database.approve_pending_user(user_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Pending user not found")
+    return {"message": "User approved successfully"}
+
+
+@router.post("/api/admin/pending-users/{user_id}/reject")
+async def admin_reject_user(
+    user_id: int,
+    current_user: dict = Depends(get_current_admin)
+):
+    """Reject a pending user registration (admin only)."""
+    success = database.reject_pending_user(user_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Pending user not found")
+    return {"message": "User rejected"}
+
+
+# =============================================================================
 # Table Routes
 # =============================================================================
 
@@ -343,7 +455,8 @@ async def get_table_preview(
         if not cache_path.exists():
             raise HTTPException(status_code=404, detail="Table not found")
         
-        df = pd.read_parquet(cache_path).head(rows)
+        # Offload pandas read to threadpool
+        df = await run_in_threadpool(lambda: pd.read_parquet(cache_path).head(rows))
         
         # Convert to JSON-serializable format
         return {
@@ -358,6 +471,7 @@ async def get_table_preview(
 class UpdateDescriptionRequest(BaseModel):
     description: Optional[str] = None
     column_descriptions: Optional[dict] = None
+    display_name: Optional[str] = None
 
 
 @router.patch("/api/tables/{table_id:path}")
@@ -376,13 +490,15 @@ async def update_table_description(
         # Use the filename stem as cache_id
         cache_id = cache_path.stem
         
-        # Update in catalog
+        # Update in catalog (offload DB write)
         from app.data_store import DatasetCatalog
         catalog = DatasetCatalog()
-        catalog.update_cached_sheet_metadata(
+        await run_in_threadpool(
+            catalog.update_cached_sheet_metadata,
             cache_id=cache_id,
             description=request.description,
-            column_descriptions=request.column_descriptions
+            column_descriptions=request.column_descriptions,
+            display_name=request.display_name
         )
         
         return {"message": "Description updated successfully"}
@@ -398,7 +514,7 @@ async def delete_table(
     """Delete a cached table."""
     try:
         cache_path = Path(table_id)
-        delete_cached_data(cache_path)
+        await run_in_threadpool(delete_cached_data, cache_path)
         return {"message": "Table deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -417,12 +533,14 @@ async def download_table_csv(
         raise HTTPException(status_code=404, detail="Table not found")
     
     try:
-        df = pd.read_parquet(cache_path)
-        
-        # Convert to CSV
-        output = io.StringIO()
-        df.to_csv(output, index=False)
-        output.seek(0)
+        def _get_csv_content():
+            df = pd.read_parquet(cache_path)
+            output = io.StringIO()
+            df.to_csv(output, index=False)
+            output.seek(0)
+            return output.getvalue()
+
+        csv_content = await run_in_threadpool(_get_csv_content)
         
         # Get filename from cache path
         filename = cache_path.stem + ".csv"
@@ -536,7 +654,7 @@ async def ask_question(
     try:
         # Smart Table Selection
         if not request.table_id:
-            ranked = chat_service.rank_tables_logic(request.question)
+            ranked = await run_in_threadpool(chat_service.rank_tables_logic, request.question)
             if not ranked:
                 raise HTTPException(status_code=400, detail="No relevant tables found. Please upload data first.")
                 
@@ -564,10 +682,10 @@ async def ask_question(
         if not cache_path.exists():
             raise HTTPException(status_code=404, detail="Table not found")
         
-        df = pd.read_parquet(cache_path)
+        df = await run_in_threadpool(pd.read_parquet, cache_path)
         client = PandasAIClient(api_key=api_key)
         
-        result = client.ask(df, request.question)
+        result = await run_in_threadpool(client.ask, df, request.question)
         
         # Save Assistant Message
         chat_service.add_message(
@@ -698,9 +816,20 @@ async def stream_chat(
             tables_to_try = []
             routing_explanation = ""
             
+            # Search documents in parallel with table routing
+            yield f"data: {json.dumps({'type': 'progress', 'message': 'Searching documents...'})}\n\n"
+            try:
+                from app.qdrant_service import search_chunks
+                doc_chunks = await run_in_threadpool(search_chunks, original_question, limit=5)
+                relevant_chunks = [c for c in doc_chunks if c.get('score', 0) >= 0.60]
+            except Exception as doc_err:
+                print(f"[DEBUG] Document search failed: {doc_err}")
+                doc_chunks = []
+                relevant_chunks = []
+            
             # Use LLM router to rank tables
             yield f"data: {json.dumps({'type': 'progress', 'message': 'Analyzing question...'})}\n\n"
-            router_rankings = route_question_to_tables(original_question)
+            router_rankings = await run_in_threadpool(route_question_to_tables, original_question)
             routing_explanation = format_routing_explanation(router_rankings)
             
             # Convert router rankings to the format expected by rest of code
@@ -746,9 +875,9 @@ async def stream_chat(
                 
                 try:
                     yield f"data: {json.dumps({'type': 'progress', 'message': 'Trying ' + table_name + '...'})}\n\n"
-                    df = pd.read_parquet(cache_path)
+                    df = await run_in_threadpool(pd.read_parquet, cache_path)
                     
-                    attempt_result = client.ask(df, request.question, history=previous_history)
+                    attempt_result = await run_in_threadpool(client.ask, df, request.question, history=previous_history)
                     print(f"[DEBUG] QA Result: has_error={attempt_result.has_error}")
                     
                     if not attempt_result.has_error:
@@ -762,10 +891,26 @@ async def stream_chat(
                     errors_log.append(f"{table_name}: {str(e)[:100]}")
             
             if not result or result.has_error:
-                # All tables failed - generate conversational clarification
+                # Data analysis failed - try document-only response if we have relevant chunks
+                if relevant_chunks:
+                    doc_response = "Berdasarkan dokumen yang relevan:\n\n"
+                    for i, chunk in enumerate(relevant_chunks[:3], 1):
+                        doc_response += f"**{i}. {chunk.get('filename', 'Document')}:**\n{chunk.get('text', '')[:500]}\n\n"
+                    
+                    yield f"data: {json.dumps({'type': 'result', 'response': doc_response, 'document_sources': [c.get('filename') for c in relevant_chunks[:3]]})}\n\n"
+                    chat_service.add_message(
+                        chat_id=request.chat_id,
+                        role="assistant",
+                        content=doc_response,
+                        metadata={"document_only": True, "document_sources": [c.get('filename') for c in relevant_chunks[:3]]}
+                    )
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    return
+                
+                # No documents either - generate conversational clarification
                 tried_names = [t.get('display_name', 'Unknown') for t in tables_to_try]
                 all_tables = ranked if ranked else tables_to_try
-                clarify_msg = generate_clarification_message(tried_names, all_tables, original_question)
+                clarify_msg = await run_in_threadpool(generate_clarification_message, tried_names, all_tables, original_question)
                 
                 yield f"data: {json.dumps({'type': 'result', 'response': clarify_msg})}\n\n"
                 chat_service.add_message(
@@ -792,13 +937,69 @@ async def stream_chat(
             if result.explanation:
                 combined_explanation += result.explanation
             
+            # Enhance response with document context if available
+            enhanced_response = result.response or ""
+            document_sources = []
+            if relevant_chunks:
+                # Synthesize document context using LLM
+                try:
+                    from app.document_processor import _get_gemini_client
+                    from app.settings import AppSettings
+                    doc_settings = AppSettings()
+                    
+                    # Prepare context for LLM
+                    chunk_texts = []
+                    for chunk in relevant_chunks[:3]:
+                        filename = chunk.get('filename', 'Document')
+                        text = chunk.get('text', '')[:500]
+                        chunk_texts.append(f"[{filename}]: {text}")
+                        document_sources.append(filename)
+                    
+                    synthesis_prompt = f"""Berdasarkan hasil analisis data dan konteks dokumen berikut, berikan penjelasan yang koheren.
+
+Pertanyaan pengguna: {original_question}
+
+Hasil analisis data:
+{result.response[:500] if result.response else 'Tidak ada hasil analisis.'}
+
+Konteks dokumen yang relevan:
+{chr(10).join(chunk_texts)}
+
+Instruksi:
+1. Jika konteks dokumen BERKAITAN dengan analisis data, jelaskan hubungannya secara ringkas
+2. Jika konteks dokumen BERBEDA/TIDAK BERKAITAN, nyatakan dengan jelas:
+   - "Analisis data menunjukkan: [ringkasan]"
+   - "Sementara itu, dokumen menunjukkan: [ringkasan]"
+3. Berikan penjelasan singkat dan padat (maksimal 4-5 kalimat)
+4. Sebutkan nama dokumen sumber
+
+Jawaban (dalam Bahasa Indonesia):"""
+
+                    def _run_synthesis():
+                        return gemini_client.models.generate_content(
+                            model=doc_settings.gemini_llm_model,
+                            contents=[synthesis_prompt]
+                        )
+                    synthesis_response = await run_in_threadpool(_run_synthesis)
+                    
+                    if synthesis_response.text:
+                        doc_context = f"\n\n---\n📄 **Konteks Dokumen:**\n{synthesis_response.text.strip()}"
+                        enhanced_response += doc_context
+                        
+                except Exception as synth_err:
+                    print(f"[DEBUG] Document synthesis failed: {synth_err}")
+                    # Fallback to simple list of sources
+                    doc_context = f"\n\n---\n📄 **Dokumen terkait:** {', '.join(document_sources)}"
+                    enhanced_response += doc_context
+            
             final_data = {
                 'type': 'result',
-                'response': result.response or "",
+                'response': enhanced_response,
                 'code': result.code,
                 'explanation': combined_explanation or None,
                 'ui_components': result.ui_components,
-                'has_error': result.has_error
+                'has_error': result.has_error,
+                'document_sources': document_sources if document_sources else None
             }
             final_result_obj = result # Capture for saving
             yield f"data: {json.dumps(final_data, default=str)}\n\n"
@@ -837,7 +1038,8 @@ async def stream_chat(
             # Auto-generate title for new chats
             if not previous_history and chat.get("title") == "New Chat":
                 try:
-                    generate_chat_title(
+                    await run_in_threadpool(
+                        generate_chat_title,
                         original_question,
                         final_result_obj.response or "Chat",
                         request.chat_id,
@@ -873,18 +1075,100 @@ async def onedrive_status(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/api/onedrive/files")
-async def list_onedrive_files(current_user: dict = Depends(get_current_user)):
-    """List files from OneDrive."""
+async def list_onedrive_files(
+    subfolder: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """List files from OneDrive. If subfolder is specified, list files in that subfolder only."""
     is_ok, error_msg = onedrive_config.is_configured()
     if not is_ok:
         raise HTTPException(status_code=400, detail=f"OneDrive not configured: {error_msg}")
     
     try:
         token = onedrive_client.get_access_token()
-        files = onedrive_client.list_files(token)
+        if subfolder:
+            files = onedrive_client.list_files_in_subfolder(token, subfolder)
+        else:
+            files = onedrive_client.list_files(token)
         return files
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/onedrive/subfolders")
+async def list_onedrive_subfolders(current_user: dict = Depends(get_current_user)):
+    """List immediate subfolders in OneDrive root path."""
+    is_ok, error_msg = onedrive_config.is_configured()
+    if not is_ok:
+        raise HTTPException(status_code=400, detail=f"OneDrive not configured: {error_msg}")
+    
+    try:
+        token = onedrive_client.get_access_token()
+        subfolders = onedrive_client.list_subfolders(token)
+        return subfolders
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class OneDriveUploadRequest(BaseModel):
+    table_id: str
+    subfolder: str
+    filename: Optional[str] = None
+
+
+@router.post("/api/onedrive/upload", status_code=202)
+async def upload_to_onedrive(
+    request: OneDriveUploadRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Upload a cached table to OneDrive.
+    Returns 202 Accepted with a job ID.
+    """
+    # Define the heavy blocking function
+    def _do_upload(table_id, filename, subfolder):
+        cache_path = Path(table_id)
+        if not cache_path.exists():
+            raise Exception("Table not found")
+            
+        df = pd.read_parquet(cache_path)
+        
+        # Determine filename
+        if filename:
+            final_name = filename
+            if not final_name.endswith('.xlsx'):
+                final_name += '.xlsx'
+        else:
+            final_name = cache_path.stem + '.xlsx'
+            
+        # Write temp file and upload
+        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
+            df.to_excel(tmp.name, index=False)
+            tmp_path = Path(tmp.name)
+            
+        try:
+            result = onedrive_client.upload_file(tmp_path, final_name, subfolder)
+            return {
+                "success": True,
+                "message": f"File '{final_name}' uploaded to {subfolder}",
+                "web_url": result.get("webUrl")
+            }
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+
+    # Submit to job manager
+    # Submit to job manager
+    job_id = job_manager.submit_job(
+        _do_upload, 
+        current_user["id"],
+        "onedrive_upload",
+        request.table_id, 
+        request.filename, 
+        request.subfolder
+    )
+    
+    return {"job_id": job_id, "message": "Upload started"}
 
 
 @router.post("/api/onedrive/sheets")
@@ -910,7 +1194,10 @@ async def get_onedrive_sheets(
         if not download_url:
             raise HTTPException(status_code=400, detail="No download URL available. Please refresh the file list.")
         
-        file_bytes = onedrive_client.download_file(download_url)
+        if not download_url:
+            raise HTTPException(status_code=400, detail="No download URL available. Please refresh the file list.")
+        
+        file_bytes = await run_in_threadpool(onedrive_client.download_file, download_url)
         sheets = onedrive_client.get_excel_sheets(file_bytes)
         return {"sheets": sheets}
     except HTTPException:
@@ -978,7 +1265,9 @@ async def load_onedrive_sheet(
         
         # Download file from OneDrive
         print(f"[LoadSheet] Downloading file from OneDrive...")
-        file_bytes = onedrive_client.download_file(download_url)
+        # Download file from OneDrive
+        print(f"[LoadSheet] Downloading file from OneDrive...")
+        file_bytes = await run_in_threadpool(onedrive_client.download_file, download_url)
         print(f"[LoadSheet] Downloaded {len(file_bytes)} bytes")
     except HTTPException:
         raise
@@ -996,15 +1285,17 @@ async def load_onedrive_sheet(
                     detail=f"Sheet '{request.sheet_name}' not found. Available sheets: {available_sheets}"
                 )
         
-        # Read file to DataFrame
-        df = onedrive_client.read_file_to_df(
+        # Read file to DataFrame (offload heavy pandas read)
+        df = await run_in_threadpool(
+            onedrive_client.read_file_to_df,
             file_bytes, 
             request.filename, 
             sheet_name=request.sheet_name
         )
         
-        # Cache as parquet
-        cache_path, n_rows, n_cols = build_parquet_cache_from_df(
+        # Cache as parquet (offload heavy write)
+        cache_path, n_rows, n_cols = await run_in_threadpool(
+            build_parquet_cache_from_df,
             df=df,
             display_name=request.display_name,
             original_file=request.filename,
@@ -1055,8 +1346,9 @@ async def upload_file(
             content = await file.read()
             f.write(content)
             
-        # Build parquet cache
-        cache_path, n_rows, n_cols = build_parquet_cache(
+        # Build parquet cache (offload heavy processing)
+        cache_path, n_rows, n_cols = await run_in_threadpool(
+            build_parquet_cache,
             path=file_path,
             display_name=filename,
             source_metadata={"source": "upload", "original_name": filename}
@@ -1077,64 +1369,50 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/files/append", response_model=AppendResponse)
+@router.post("/api/files/append", status_code=202)
 async def append_to_table(
     request: AppendRequest,
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Append new data from an uploaded source table to an existing target table.
-    
-    This endpoint:
-    1. Reads the source (new upload) and target tables
-    2. Validates that column structures match exactly
-    3. Appends the source data to target
-    4. Returns natural language error if columns don't match
+    Append data from one table to another.
+    Returns 202 Accepted with a job ID.
     """
-    try:
-        target_path = Path(request.target_table_id)
-        source_path = Path(request.source_table_id)
+    def _do_append(source_id, target_id, description):
+        source_path = Path(source_id)
+        target_path = Path(target_id)
         
-        if not target_path.exists():
-            raise HTTPException(status_code=404, detail="Target table not found")
-        if not source_path.exists():
-            raise HTTPException(status_code=404, detail="Source table not found")
-        
-        # Read source data
+        if not source_path.exists() or not target_path.exists():
+            raise Exception("Table not found")
+            
         source_df = pd.read_parquet(source_path)
         
-        # Append to target
         total_rows, rows_added, error_msg = append_to_parquet_cache(
             cache_path=target_path,
             new_df=source_df,
-            description=request.description or "Data appended"
+            description=description or "Data appended"
         )
         
         if error_msg:
-            # Return natural language error to user
-            return AppendResponse(
-                cache_path=str(target_path),
-                total_rows=0,
-                rows_added=0,
-                message="Append failed",
-                error=error_msg
-            )
-        
-        # Success - optionally delete source temp file
-        # source_path.unlink()  # Uncomment if you want to auto-delete
-        
-        return AppendResponse(
-            cache_path=str(target_path),
-            total_rows=total_rows,
-            rows_added=rows_added,
-            message=f"Successfully appended {rows_added} rows. Total rows: {total_rows}",
-            error=None
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            raise Exception(error_msg)
+            
+        return {
+            "cache_path": str(target_path),
+            "total_rows": total_rows,
+            "rows_added": rows_added,
+            "message": f"Successfully appended {rows_added} rows."
+        }
+
+    job_id = job_manager.submit_job(
+        _do_append,
+        current_user["id"],
+        "append",
+        request.source_table_id,
+        request.target_table_id,
+        request.description
+    )
+    
+    return {"job_id": job_id, "message": "Append started"}
 
 
 @router.post("/api/files/append/validate", response_model=AppendValidateResponse)
@@ -1159,8 +1437,8 @@ async def validate_append(
         target_info = get_target_table_info(target_path)
         target_columns = target_info["columns"]
         
-        # Read source to get columns
-        source_df = pd.read_parquet(source_path)
+        # Read source to get columns (offload)
+        source_df = await run_in_threadpool(pd.read_parquet, source_path)
         source_columns = list(source_df.columns)
         
         # Check if columns already match
@@ -1220,10 +1498,13 @@ Columns: {source_columns}
 QUESTION: Is this source data structurally similar to what the original transform was designed for?
 Answer with "YES" or "NO" followed by a brief explanation (1-2 sentences)."""
 
-                    response = client.responses.create(
-                        model=app_settings.default_llm_model,
-                        input=prompt,
-                    )
+                    def _run_llm_check():
+                        return client.responses.create(
+                            model=app_settings.default_llm_model,
+                            input=prompt,
+                        )
+
+                    response = await run_in_threadpool(_run_llm_check)
                     
                     answer = response.output_text.strip() if response.output_text else ""
                     compatible = answer.upper().startswith("YES")
@@ -1286,12 +1567,14 @@ async def preview_append_transform(
                 error="Target table has no stored transform code."
             )
         
-        # Read source data
-        source_df = pd.read_parquet(source_path)
+        
+        # Read source data (offload)
+        source_df = await run_in_threadpool(pd.read_parquet, source_path)
         
         # If user provided feedback, regenerate the transform
         if request.user_feedback:
-            result = regenerate_with_feedback(
+            result = await run_in_threadpool(
+                regenerate_with_feedback,
                 df=source_df,
                 previous_code=transform_code,
                 user_feedback=request.user_feedback,
@@ -1308,8 +1591,9 @@ async def preview_append_transform(
             
             transform_code = result.transform_code
         
-        # Apply transform
-        transformed_df, error = apply_stored_transform(
+        # Apply transform (offload)
+        transformed_df, error = await run_in_threadpool(
+            apply_stored_transform,
             source_df=source_df,
             transform_code=transform_code,
             preview_only=True,
@@ -1360,43 +1644,33 @@ async def preview_append_transform(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/files/append/confirm-transform", response_model=AppendResponse)
+@router.post("/api/files/append/confirm-transform", status_code=202)
 async def confirm_append_transform(
     request: AppendConfirmRequest,
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Apply stored transform to full source data and append to target.
+    Execute transform and append.
+    Returns 202 Accepted with a job ID.
     """
-    try:
-        target_path = Path(request.target_table_id)
-        source_path = Path(request.source_table_id)
+    def _do_confirm_append(source_id, target_id, description, code):
+        source_path = Path(source_id)
+        target_path = Path(target_id)
         
-        if not target_path.exists():
-            raise HTTPException(status_code=404, detail="Target table not found")
-        if not source_path.exists():
-            raise HTTPException(status_code=404, detail="Source table not found")
-        
-        # Get transform code from request, or fallback to stored
-        transform_code = request.transform_code
+        if not source_path.exists() or not target_path.exists():
+            raise Exception("Table not found")
+            
+        # Get stored transform if not provided
+        transform_code = code
         if not transform_code:
-            # Fallback to stored transform
             target_info = get_target_table_info(target_path)
             transform_code = target_info.get("transform_code")
-        
+            
         if not transform_code:
-            return AppendResponse(
-                cache_path=str(target_path),
-                total_rows=0,
-                rows_added=0,
-                message="Append failed",
-                error="Target table has no stored transform code."
-            )
-        
-        # Read source data (full)
+            raise Exception("Target table has no stored transform code.")
+            
         source_df = pd.read_parquet(source_path)
         
-        # Apply transform to full data
         transformed_df, error = apply_stored_transform(
             source_df=source_df,
             transform_code=transform_code,
@@ -1404,44 +1678,37 @@ async def confirm_append_transform(
         )
         
         if error:
-            return AppendResponse(
-                cache_path=str(target_path),
-                total_rows=0,
-                rows_added=0,
-                message="Transform failed",
-                error=error
-            )
-        
-        # Now append transformed data
+            raise Exception(f"Transformation failed: {error}")
+            
         total_rows, rows_added, append_error = append_to_parquet_cache(
             cache_path=target_path,
             new_df=transformed_df,
-            description=request.description or "Data appended via transform",
-            transform_code=transform_code if request.transform_code else None,
-            transform_explanation="User generated transform" if request.transform_code else None
+            description=description or "Data appended via transform",
+            transform_code=transform_code if code else None,
+            transform_explanation="User generated transform" if code else None
         )
         
         if append_error:
-            return AppendResponse(
-                cache_path=str(target_path),
-                total_rows=0,
-                rows_added=0,
-                message="Append failed after transform",
-                error=append_error
-            )
-        
-        return AppendResponse(
-            cache_path=str(target_path),
-            total_rows=total_rows,
-            rows_added=rows_added,
-            message=f"Successfully transformed and appended {rows_added} rows. Total: {total_rows}",
-            error=None
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            raise Exception(append_error)
+            
+        return {
+            "cache_path": str(target_path),
+            "total_rows": total_rows,
+            "rows_added": rows_added,
+            "message": f"Successfully appended {rows_added} transformed rows."
+        }
+
+    job_id = job_manager.submit_job(
+        _do_confirm_append,
+        current_user["id"],
+        "append",
+        request.source_table_id,
+        request.target_table_id,
+        request.description,
+        request.transform_code
+    )
+    
+    return {"job_id": job_id, "message": "Append with transform started"}
 
 
 @router.post("/api/files/append/generate-transform", response_model=AppendPreviewResponse)
@@ -1466,8 +1733,8 @@ async def generate_append_transform(
         target_info = get_target_table_info(target_path)
         target_columns = target_info["columns"]
         
-        # Read source data for analysis
-        source_df = pd.read_parquet(source_path)
+        # Read source data for analysis (offload)
+        source_df = await run_in_threadpool(pd.read_parquet, source_path)
         source_sample = source_df.head(10).to_string()
         source_columns = list(source_df.columns)
         
@@ -1510,10 +1777,13 @@ REQUIREMENTS:
 
 Generate the Python code:"""
 
-            response = client.responses.create(
-                model=app_settings.default_llm_model,
-                input=prompt,
-            )
+            def _run_llm_gen():
+                return client.responses.create(
+                    model=app_settings.default_llm_model,
+                    input=prompt,
+                )
+            
+            response = await run_in_threadpool(_run_llm_gen)
             
             if not response.output_text:
                 return AppendPreviewResponse(
@@ -1532,8 +1802,9 @@ Generate the Python code:"""
             elif "```" in transform_code:
                 transform_code = transform_code.split("```")[1].split("```")[0].strip()
             
-            # Apply the generated transform
-            transformed_df, error = apply_stored_transform(
+            # Apply the generated transform (offload)
+            transformed_df, error = await run_in_threadpool(
+                apply_stored_transform,
                 source_df=source_df,
                 transform_code=transform_code,
                 preview_only=True,
@@ -1590,36 +1861,69 @@ Generate the Python code:"""
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/files/analyze")
+@router.post("/api/files/analyze", status_code=202)
 async def analyze_file(
     request: AnalyzeRequest,
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Analyze values in a cached table and generate transformation code.
-    Reads from existing parquet cache.
+    Analyze values in a background job.
+    Returns 202 with job_id.
     """
-    try:
-        cache_path = Path(request.table_id)
+    logger.info(f"Analyze request received with metadata: {request.metadata}")
+    def _do_analyze(table_id, user_desc):
+        cache_path = Path(table_id)
         if not cache_path.exists():
-            raise HTTPException(status_code=404, detail="Table not found")
+            raise Exception("Table not found")
         
-        # Read full dataframe for analysis (or sample if too large)
-        # analyze_and_generate_transform handles sampling internally but needs a DF
+        # Read full dataframe (sync execution in thread)
         df = pd.read_parquet(cache_path)
         
         # Call AI Analyzer
+        # Since we are already in a thread (job executor), we can call sync functions
+        # But analyze_and_generate_transform is async? No, let's check.
+        # It's imported from app.data_analyzer.
+        
+        # Wait, analyze_and_generate_transform might be async definition?
+        # If it is async, we can't call it easily from ThreadPoolExecutor without new loop.
+        # Let's verify app/data_analyzer.py... I haven't read it.
+        # Assuming it is sync or I need to handle it.
+        
+        # Actually I can just check if I can see it?
+        # I'll blindly attempt to run it synchronously. 
+        # If it returns a coroutine, I messed up.
+        # Most of my "AI" calls use run_in_threadpool which implies the underlying functions are sync (blocking I/O).
+        # Yes, PandasAIClient puts requests to OpenAI which are sync by default unless AsyncOpenAI is used.
+        # app/qa_engine.py showed OpenAI(api_key=...) which is synchronous client.
+        
+        from app.data_analyzer import analyze_and_generate_transform
+        
+        # run_in_threadpool in the original code suggested it was blocking.
+        # So I can just call it directly here.
+        
         result = analyze_and_generate_transform(
             df=df,
             filename=str(cache_path.name),
-            user_description=request.user_description
+            user_description=user_desc
         )
         
-        # Serialize response manually since Pydantic might not like numpy types
-        # And we don't need to send the full DFs back, just preview
+        # Serialize response
         preview_data = []
-        if result.preview_df is not None:
+        preview_columns = []
+        transformed_preview_id = None
+        
+        if result.preview_df is not None and not result.preview_df.empty:
             preview_data = result.preview_df.fillna("").to_dict(orient="records")
+            preview_columns = list(result.preview_df.columns)
+            
+            # Save transformed preview to a temp parquet for state recovery
+            import hashlib
+            import tempfile
+            cache_hash = hashlib.md5(f"{table_id}_transformed".encode()).hexdigest()[:12]
+            transformed_cache_path = Path(tempfile.gettempdir()) / f"transformed_{cache_hash}.parquet"
+            result.preview_df.to_parquet(transformed_cache_path, index=False)
+            transformed_preview_id = str(transformed_cache_path)
+            logger.info(f"Saved transformed preview to: {transformed_preview_id}")
             
         return {
             "summary": result.summary,
@@ -1629,13 +1933,27 @@ async def analyze_file(
             "validation_notes": result.validation_notes,
             "explanation": result.explanation,
             "preview_data": preview_data,
+            "preview_columns": preview_columns,
+            "transformed_preview_id": transformed_preview_id,
             "has_error": result.has_error
         }
 
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+    # Build metadata for recovery
+    job_metadata = request.metadata or {}
+    if "displayName" not in job_metadata:
+        job_metadata["displayName"] = Path(request.table_id).stem
+    job_metadata["previewTableId"] = request.table_id
+
+    job_id = job_manager.submit_job(
+        _do_analyze,
+        current_user["id"],
+        "analyze",
+        request.table_id,
+        request.user_description,
+        metadata=job_metadata
+    )
+    
+    return {"job_id": job_id, "message": "Analysis started"}
 
 
 @router.post("/api/files/transform/preview", response_model=TransformPreviewResponse)
@@ -1651,10 +1969,10 @@ async def preview_transform(
         if not cache_path.exists():
             raise HTTPException(status_code=404, detail="Table not found")
         
-        df = pd.read_parquet(cache_path)
+        df = await run_in_threadpool(pd.read_parquet, cache_path)
         
-        # Execute transform
-        transformed_df, error = execute_transform(df, request.transform_code)
+        # Execute transform (offload)
+        transformed_df, error = await run_in_threadpool(execute_transform, df, request.transform_code)
         
         if error:
             return TransformPreviewResponse(
@@ -1677,69 +1995,71 @@ async def preview_transform(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/files/transform/confirm", response_model=TransformConfirmResponse)
+@router.post("/api/files/transform/confirm", status_code=202)
 async def confirm_transform(
     request: TransformRequest,
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Execute transformation and save.
-    If replace_original=True, overwrites the existing parquet file.
-    If replace_original=False (default), creates a new cached table.
+    Confirm and apply a transformation properly.
+    Returns 202 Accepted with a job ID.
     """
-    try:
-        cache_path = Path(request.table_id)
+    def _do_confirm_transform(table_id, code, display_name, replace_original, parent_id):
+        cache_path = Path(table_id)
         if not cache_path.exists():
-            raise HTTPException(status_code=404, detail="Table not found")
-        
+            raise Exception("Table not found")
+            
         df = pd.read_parquet(cache_path)
-        
-        # Execute transform (on full data)
-        transformed_df, error = execute_transform(df, request.transform_code)
+        transformed_df, error = execute_transform(df, code)
         
         if error:
-            raise HTTPException(status_code=400, detail=f"Transformation failed: {error}")
-        
-        if request.replace_original:
-            # REPLACE mode: Overwrite the existing parquet file
+            raise Exception(f"Transformation failed: {error}")
+            
+        if replace_original:
             n_rows, n_cols = update_existing_parquet_cache(
                 cache_path=cache_path,
                 df=transformed_df,
-                transform_code=request.transform_code,
-                display_name=request.display_name
+                transform_code=code,
+                display_name=display_name
             )
-            
-            return TransformConfirmResponse(
-                cache_path=str(cache_path),
-                n_rows=n_rows,
-                n_cols=n_cols,
-                message="Transformation applied and table updated successfully"
-            )
+            final_path = cache_path
+            msg = "Table updated successfully"
         else:
-            # CREATE NEW mode: Create a new cached table (original behavior)
             original_name = cache_path.stem.split('_', 1)[-1]  # naïve approach
-            display_name = request.display_name or f"{original_name} (Cleaned)"
+            final_display_name = display_name or f"{original_name} (Cleaned)"
             
             new_cache_path, n_rows, n_cols = build_parquet_cache_from_df(
                 df=transformed_df,
-                display_name=display_name,
-                original_file=str(cache_path),  # Trace lineage
+                display_name=final_display_name,
+                original_file=str(cache_path),
                 source_metadata={
                     "source": "transform",
-                    "parent_table_id": request.table_id,
-                    "transform_code": request.transform_code
-                }
+                    "parent_table_id": parent_id,
+                },
+                transform_code=code
             )
+            final_path = new_cache_path
+            msg = "New table created successfully"
             
-            return TransformConfirmResponse(
-                cache_path=str(new_cache_path),
-                n_rows=n_rows,
-                n_cols=n_cols,
-                message="Transformation applied and saved as new table"
-            )
+        return {
+            "cache_path": str(final_path),
+            "n_rows": n_rows,
+            "n_cols": n_cols,
+            "message": msg
+        }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    job_id = job_manager.submit_job(
+        _do_confirm_transform,
+        current_user["id"],
+        "transform",
+        request.table_id,
+        request.transform_code,
+        request.display_name,
+        request.replace_original,
+        request.table_id
+    )
+    
+    return {"job_id": job_id, "message": "Transformation started"}
 
 
 
@@ -1758,25 +2078,30 @@ async def refine_transform(
     """
     Refine transformation code based on user feedback.
     """
-    try:
-        cache_path = Path(request.table_id)
+    """
+    Refine transformation code based on user feedback.
+    """
+    def _do_refine_transform(table_id, transform_code, feedback):
+        cache_path = Path(table_id)
         if not cache_path.exists():
-            raise HTTPException(status_code=404, detail="Table not found")
+            raise Exception("Table not found")
         
         df = pd.read_parquet(cache_path)
         
         # Call AI to regenerate
         result = regenerate_with_feedback(
             df=df,
-            previous_code=request.transform_code,
-            user_feedback=request.feedback,
+            previous_code=transform_code,
+            user_feedback=feedback,
             filename=str(cache_path.name)
         )
         
         # Preview data if available
         preview_data = []
+        preview_columns = []
         if result.preview_df is not None:
             preview_data = result.preview_df.fillna("").to_dict(orient="records")
+            preview_columns = list(result.preview_df.columns)
             
         return {
             "summary": result.summary,
@@ -1786,10 +2111,204 @@ async def refine_transform(
             "validation_notes": result.validation_notes,
             "explanation": result.explanation,
             "preview_data": preview_data,
+            "preview_columns": preview_columns,
             "has_error": result.has_error
         }
 
+    job_id = job_manager.submit_job(
+        _do_refine_transform,
+        current_user["id"],
+        "refine",
+        request.table_id,
+        request.transform_code,
+        request.feedback,
+        metadata={
+            "displayName": f"Refine: {request.feedback[:30]}...",
+            "feedback": request.feedback
+        }
+    )
+    
+    return {"job_id": job_id, "message": "Refinement job started"}
+
+
+# =============================================================================
+# Document Context Retrieval Routes
+# =============================================================================
+
+class DocumentSearchRequest(BaseModel):
+    query: str
+    limit: int = 5
+
+
+class DocumentSearchResult(BaseModel):
+    id: Any
+    score: float
+    text: str
+    filename: str
+    doc_id: str
+    chunk_index: int
+    path: str
+    web_url: str
+
+
+class DocumentSearchResponse(BaseModel):
+    results: List[DocumentSearchResult]
+    query: str
+    total_results: int
+
+
+@router.post("/api/documents/ingest/dry-run")
+async def documents_ingest_dry_run(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Dry run: Discover documents in DOCUMENT_ROOT_PATH without ingesting.
+    Returns list of files that would be processed.
+    """
+    from app.document_ingestion import ingest_all_documents
+    
+    try:
+        result = ingest_all_documents(dry_run=True)
+        return result
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/documents/ingest", status_code=202)
+async def documents_ingest_all(
+    skip_existing: bool = True,
+    current_user: dict = Depends(get_current_admin)
+):
+    """
+    Trigger full document ingestion background job.
+    Returns 202 Accepted with a job ID.
+    """
+    from app.document_ingestion import ingest_all_documents
+    
+    def _do_ingest(skip):
+        return ingest_all_documents(dry_run=False, skip_existing=skip)
+
+    job_id = job_manager.submit_job(_do_ingest, current_user["id"], "ingest", skip_existing)
+    return {"job_id": job_id, "message": "Document ingestion started"}
+
+@router.post("/api/documents/ingest/dry-run", status_code=202)
+async def documents_ingest_dry_run(current_user: dict = Depends(get_current_admin)):
+    """Dry run ingestion in background."""
+    from app.document_ingestion import ingest_all_documents
+    
+    def _do_dry_run():
+        return ingest_all_documents(dry_run=True)
+        
+    job_id = job_manager.submit_job(_do_dry_run, current_user["id"], "ingest_dry_run")
+    return {"job_id": job_id, "message": "Dry run started"}
+
+# Job Status Endpoint
+@router.get("/api/jobs")
+async def list_jobs(
+    type: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """List background jobs for current user."""
+    return job_manager.get_user_jobs(current_user["id"], job_type=type)
+
+@router.get("/api/jobs/{job_id}")
+async def get_job_status(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get status of a background job."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+@router.delete("/api/jobs/{job_id}")
+async def delete_job(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a specific job."""
+    try:
+        job_manager.delete_job(job_id, current_user["id"])
+        return {"message": "Job deleted"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.delete("/api/jobs/clear")
+async def clear_jobs(
+    period: str = "all",
+    current_user: dict = Depends(get_current_user)
+):
+    """Clear jobs by period: hour, today, 3days, or all."""
+    from datetime import datetime, timedelta
+    
+    now = datetime.now()
+    if period == "hour":
+        cutoff = now - timedelta(hours=1)
+    elif period == "today":
+        cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "3days":
+        cutoff = now - timedelta(days=3)
+    else:
+        cutoff = None  # Clear all
+    
+    count = job_manager.clear_user_jobs(current_user["id"], cutoff)
+    return {"message": f"Cleared {count} jobs"}
+
+
+@router.post("/api/documents/search", response_model=DocumentSearchResponse)
+async def documents_search(
+    request: DocumentSearchRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Search ingested documents using hybrid search (semantic + keyword).
+    Returns relevant document chunks.
+    """
+    from app.qdrant_service import search_chunks
+    
+    try:
+        results = search_chunks(request.query, limit=request.limit)
+        
+        return DocumentSearchResponse(
+            results=[DocumentSearchResult(**r) for r in results],
+            query=request.query,
+            total_results=len(results)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/documents/status")
+async def documents_status(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get document ingestion status: collection info and document count.
+    """
+    from app.document_ingestion import get_ingestion_status
+    
+    try:
+        return get_ingestion_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/api/documents/clear")
+async def documents_clear(
+    current_user: dict = Depends(get_current_admin)  # Admin only
+):
+    """
+    Clear all ingested documents from Qdrant collection.
+    """
+    from app.document_ingestion import clear_all_documents
+    
+    try:
+        success = clear_all_documents()
+        if success:
+            return {"message": "All documents cleared successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to clear documents")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

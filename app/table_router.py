@@ -28,34 +28,34 @@ class TableRanking:
 
 
 _ROUTER_PROMPT = """\
-You are a data table router. Given a user question and available tables, rank which tables are most likely to answer the question.
+Kamu adalah router tabel data. Berdasarkan pertanyaan user dan tabel yang tersedia, ranking tabel mana yang paling relevan untuk menjawab pertanyaan.
 
-## User Question:
+## Pertanyaan User:
 {question}
 
-## Available Tables:
+## Tabel Tersedia:
 {tables_context}
 
-## Task:
-Return a JSON array ranking the TOP 3 most relevant tables (or fewer if less than 3 tables exist).
-Each item must have: "index" (1-based), "score" (0-100), "reason" (max 15 words).
+## Tugas:
+Return JSON array berisi ranking TOP 3 tabel paling relevan (atau kurang jika tabel < 3).
+Setiap item harus punya: "index" (1-based), "score" (0-100), "reason" (maks 15 kata).
 
-## Rules:
-- Score 80-100: Table clearly contains the data needed
-- Score 50-79: Table might contain relevant data
-- Score 0-49: Table unlikely to help
-- Only include tables with score >= 30
-- Be concise - max 15 words per reason
+## Aturan:
+- Score 80-100: Tabel jelas mengandung data yang dibutuhkan
+- Score 50-79: Tabel mungkin mengandung data relevan
+- Score 0-49: Tabel kemungkinan tidak membantu
+- Hanya include tabel dengan score >= 30
+- Singkat - maksimal 15 kata per reason
 
-## Example Output:
+## Contoh Output:
 ```json
 [
-  {{"index": 1, "score": 95, "reason": "Contains RFT metrics by production line"}},
-  {{"index": 3, "score": 60, "reason": "Has production data but unclear columns"}}
+  {{"index": 1, "score": 95, "reason": "Mengandung metrik RFT per line produksi"}},
+  {{"index": 3, "score": 60, "reason": "Ada data produksi tapi kolom kurang jelas"}}
 ]
 ```
 
-Return ONLY the JSON array, no other text.
+Return HANYA JSON array, tanpa teks lain.
 """
 
 

@@ -45,7 +45,25 @@ def init_database() -> None:
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
                 display_name TEXT,
+                requested_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )''')
+            
+            # Migration: Add requested_at column if not exists
+            c.execute("PRAGMA table_info(users)")
+            columns = [col[1] for col in c.fetchall()]
+            if 'requested_at' not in columns:
+                c.execute("ALTER TABLE users ADD COLUMN requested_at TIMESTAMP")
+                print("Added requested_at column to users table")
+            
+            # Pending Users table (for registration approval)
+            c.execute('''CREATE TABLE IF NOT EXISTS pending_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT,
+                password_hash TEXT NOT NULL,
+                requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'pending'
             )''')
 
             # Chats table
@@ -177,4 +195,102 @@ def delete_user(username: str) -> bool:
             return affected > 0
     except sqlite3.Error as e:
         print(f"Error deleting user: {e}")
+        return False
+
+
+# -----------------------------------------------------------------------------
+# Pending Users (Registration Approval Workflow)
+# -----------------------------------------------------------------------------
+
+def add_pending_user(username: str, password_hash: str, email: str = None) -> bool:
+    """Add a user registration request for admin approval."""
+    try:
+        with _get_connection() as conn:
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO pending_users (username, email, password_hash) VALUES (?, ?, ?)",
+                (username, email, password_hash)
+            )
+            conn.commit()
+            return True
+    except sqlite3.IntegrityError:
+        return False
+    except sqlite3.Error as e:
+        print(f"Error adding pending user: {e}")
+        return False
+
+
+def get_pending_users() -> List[Dict[str, Any]]:
+    """Get all pending registration requests."""
+    try:
+        with _get_connection() as conn:
+            c = conn.cursor()
+            c.execute("""SELECT id, username, email, requested_at, status 
+                        FROM pending_users WHERE status = 'pending' 
+                        ORDER BY requested_at DESC""")
+            rows = c.fetchall()
+            return [dict(row) for row in rows]
+    except sqlite3.Error as e:
+        print(f"Error getting pending users: {e}")
+        return []
+
+
+def get_pending_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
+    """Get a pending user by ID."""
+    try:
+        with _get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM pending_users WHERE id = ?", (user_id,))
+            row = c.fetchone()
+            return dict(row) if row else None
+    except sqlite3.Error as e:
+        print(f"Error getting pending user: {e}")
+        return None
+
+
+def approve_pending_user(user_id: int) -> bool:
+    """Approve a pending user and move them to users table."""
+    try:
+        pending = get_pending_user_by_id(user_id)
+        if not pending:
+            return False
+        
+        with _get_connection() as conn:
+            c = conn.cursor()
+            requested_at = pending.get('requested_at')
+            c.execute(
+                """INSERT INTO users (username, password_hash, role, requested_at, created_at) 
+                   VALUES (?, ?, 'user', ?, CURRENT_TIMESTAMP)""",
+                (pending['username'], pending['password_hash'], requested_at)
+            )
+            c.execute("UPDATE pending_users SET status = 'approved' WHERE id = ?", (user_id,))
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        print(f"Error approving user: {e}")
+        return False
+
+
+def reject_pending_user(user_id: int) -> bool:
+    """Reject a pending user request."""
+    try:
+        with _get_connection() as conn:
+            c = conn.cursor()
+            c.execute("UPDATE pending_users SET status = 'rejected' WHERE id = ?", (user_id,))
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        print(f"Error rejecting user: {e}")
+        return False
+
+
+def check_pending_username_exists(username: str) -> bool:
+    """Check if username exists in pending users."""
+    try:
+        with _get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT 1 FROM pending_users WHERE username = ? AND status = 'pending'", (username,))
+            return c.fetchone() is not None
+    except sqlite3.Error as e:
+        print(f"Error checking pending username: {e}")
         return False

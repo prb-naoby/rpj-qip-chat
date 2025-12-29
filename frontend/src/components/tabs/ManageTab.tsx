@@ -18,6 +18,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { DataPreview } from '@/components/DataPreview';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import api from '@/lib/api';
 import {
     AlertDialog,
@@ -32,6 +33,8 @@ import {
 import { toast } from 'sonner';
 
 import { AnalysisDialog } from '@/components/analysis/AnalysisDialog';
+import { useUserJobs } from '@/hooks/useUserJobs';
+import { JobStatusList } from '@/components/JobStatusList';
 
 interface DeleteTarget {
     cachePath: string;
@@ -53,11 +56,13 @@ import { RootState } from '@/store';
 
 export default function ManageTab() {
     const dispatch = useAppDispatch();
-    const { tables, isLoading } = useAppSelector((state: any) => state.tables); // Temporary fix, should use RootState properly but avoiding complex circular deps or type mismatches for now. Or check RootState definition.
+    const { tables, isLoading } = useAppSelector((state: any) => state.tables);
+    const { jobs, isLoading: isJobsLoading, refresh: refreshJobs } = useUserJobs();
     const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
     const [analysisTarget, setAnalysisTarget] = useState<AnalysisTarget | null>(null);
     const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
     const [editDescription, setEditDescription] = useState('');
+    const [editName, setEditName] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
     const [isSavingDescription, setIsSavingDescription] = useState(false);
     const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
@@ -93,6 +98,7 @@ export default function ManageTab() {
             description: table.description || ''
         });
         setEditDescription(table.description || '');
+        setEditName(table.display_name);
     };
 
     const handleSaveDescription = async () => {
@@ -100,8 +106,8 @@ export default function ManageTab() {
 
         setIsSavingDescription(true);
         try {
-            await api.updateTableDescription(editTarget.cachePath, editDescription);
-            toast.success(`✅ Deskripsi berhasil disimpan`);
+            await api.updateTableDescription(editTarget.cachePath, editDescription, editName);
+            toast.success(`✅ Perubahan berhasil disimpan`);
             dispatch(fetchTables());
             setEditTarget(null);
         } catch (error: any) {
@@ -140,6 +146,13 @@ export default function ManageTab() {
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
+                    <JobStatusList
+                        jobs={jobs}
+                        isLoading={isJobsLoading}
+                        title="Active Jobs"
+                        className="mb-4"
+                        onJobsChange={refreshJobs}
+                    />
                     {tables.length === 0 ? (
                         <div className="text-center py-8 text-muted-foreground">
                             <div className="text-4xl mb-4">📊</div>
@@ -364,19 +377,31 @@ export default function ManageTab() {
                 <DialogContent className="bg-card border-border">
                     <DialogHeader>
                         <DialogTitle className="text-card-foreground">
-                            ✏️ Edit Description: {editTarget?.displayName}
+                            ✏️ Edit Table
                         </DialogTitle>
                     </DialogHeader>
-                    <div className="py-4">
-                        <Textarea
-                            placeholder="Add a description to help AI understand this data..."
-                            value={editDescription}
-                            onChange={(e) => setEditDescription(e.target.value)}
-                            className="min-h-[100px] bg-background border-input"
-                        />
-                        <p className="text-xs text-muted-foreground mt-2">
-                            A good description helps AI provide more accurate answers when querying this data.
-                        </p>
+                    <div className="py-4 space-y-4">
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Table Name</label>
+                            <Input
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                placeholder="Enter table name..."
+                                className="bg-background border-input"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Description</label>
+                            <Textarea
+                                placeholder="Add a description to help AI understand this data..."
+                                value={editDescription}
+                                onChange={(e) => setEditDescription(e.target.value)}
+                                className="min-h-[100px] bg-background border-input"
+                            />
+                            <p className="text-xs text-muted-foreground mt-2">
+                                A good description helps AI provide more accurate answers when querying this data.
+                            </p>
+                        </div>
                     </div>
                     <DialogFooter>
                         <Button
