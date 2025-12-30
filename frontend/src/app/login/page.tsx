@@ -62,7 +62,7 @@ export default function LoginPage() {
                         </motion.div>
                         <CardTitle className="text-2xl font-bold text-card-foreground">QIP Data Assistant</CardTitle>
                         <CardDescription className="text-muted-foreground">
-                            Silakan login untuk melanjutkan
+                            Please login to continue
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -72,7 +72,7 @@ export default function LoginPage() {
                                 <Input
                                     id="username"
                                     type="text"
-                                    placeholder="Masukkan username..."
+                                    placeholder="Enter username..."
                                     value={username}
                                     onChange={(e) => setUsername(e.target.value)}
                                     className="bg-background border-input text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
@@ -84,7 +84,7 @@ export default function LoginPage() {
                                 <Input
                                     id="password"
                                     type="password"
-                                    placeholder="Masukkan password..."
+                                    placeholder="Enter password..."
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     className="bg-background border-input text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
@@ -133,9 +133,9 @@ export default function LoginPage() {
                         </form>
 
                         <div className="mt-4 text-center text-sm text-muted-foreground">
-                            Belum punya akun?{' '}
+                            Don't have an account?{' '}
                             <a href="/signup" className="text-primary hover:underline">
-                                Daftar di sini
+                                Sign up here
                             </a>
                         </div>
                     </CardContent>

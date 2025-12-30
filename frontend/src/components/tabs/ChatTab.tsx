@@ -146,7 +146,7 @@ export default function ChatTab() {
                                                                 <CollapsibleContent>
                                                                     <div className="p-3 bg-muted/50 rounded-lg border border-border/50">
                                                                         <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
-                                                                            {msg.explanation || "Hasil diperoleh dari analisis langsung terhadap data yang tersedia."}
+                                                                            {msg.explanation || "Results obtained from direct analysis of available data."}
                                                                         </p>
                                                                     </div>
                                                                 </CollapsibleContent>

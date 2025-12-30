@@ -60,19 +60,19 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
     // Handle display name update
     const handleUpdateDisplayName = async () => {
         if (!newDisplayName.trim()) {
-            toast.error('Nama tampilan tidak boleh kosong');
+            toast.error('Display name cannot be empty');
             return;
         }
 
         setIsUpdatingName(true);
         try {
             await api.updateProfile(newDisplayName.trim());
-            toast.success('✅ Nama tampilan berhasil diperbarui');
+            toast.success('✅ Display name updated successfully');
             dispatch(fetchCurrentUser());
             setIsNameDialogOpen(false);
             setNewDisplayName('');
         } catch (error: any) {
-            toast.error(`Gagal memperbarui: ${error.response?.data?.detail || error.message}`);
+            toast.error(`Failed to update: ${error.response?.data?.detail || error.message}`);
         } finally {
             setIsUpdatingName(false);
         }
@@ -81,17 +81,17 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
     // Handle password change
     const handleChangePassword = async () => {
         if (!currentPassword || !newPassword) {
-            toast.error('Semua field harus diisi');
+            toast.error('All fields are required');
             return;
         }
 
         if (newPassword !== confirmPassword) {
-            toast.error('Password baru tidak cocok');
+            toast.error('New passwords do not match');
             return;
         }
 
         if (newPassword.length < 6) {
-            toast.error('Password minimal 6 karakter');
+            toast.error('Password must be at least 6 characters');
             return;
         }
 
@@ -101,13 +101,13 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
                 new_password: newPassword,
             })).unwrap();
 
-            toast.success('✅ Password berhasil diubah');
+            toast.success('✅ Password changed successfully');
             setIsPasswordDialogOpen(false);
             setCurrentPassword('');
             setNewPassword('');
             setConfirmPassword('');
         } catch (error: any) {
-            toast.error(`Gagal mengubah password: ${error}`);
+            toast.error(`Failed to change password: ${error}`);
         }
     };
 
@@ -170,7 +170,7 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
                         className="cursor-pointer"
                     >
                         <UserPen className="mr-2 h-4 w-4" />
-                        Edit Nama Tampilan
+                        Edit Display Name
                     </DropdownMenuItem>
                     <DropdownMenuItem
                         onClick={() => {
@@ -180,7 +180,7 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
                         className="cursor-pointer"
                     >
                         <KeyRound className="mr-2 h-4 w-4" />
-                        Ubah Password
+                        Change Password
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
@@ -197,19 +197,19 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
             <Dialog open={isNameDialogOpen} onOpenChange={setIsNameDialogOpen}>
                 <DialogContent className="bg-card border-border">
                     <DialogHeader>
-                        <DialogTitle className="text-card-foreground">✏️ Ubah Nama Tampilan</DialogTitle>
+                        <DialogTitle className="text-card-foreground">✏️ Change Display Name</DialogTitle>
                         <DialogDescription className="text-muted-foreground">
-                            Nama ini akan ditampilkan di aplikasi
+                            This name will be displayed in the application
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                         <div className="space-y-2">
                             <Label htmlFor="display_name" className="text-foreground">
-                                Nama Tampilan Baru
+                                New Display Name
                             </Label>
                             <Input
                                 id="display_name"
-                                placeholder="Masukkan nama baru..."
+                                placeholder="Enter new name..."
                                 value={newDisplayName}
                                 onChange={(e) => setNewDisplayName(e.target.value)}
                                 className="bg-background border-input text-foreground"
@@ -221,7 +221,7 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
                             variant="outline"
                             onClick={() => setIsNameDialogOpen(false)}
                         >
-                            Batal
+                            Cancel
                         </Button>
                         <Button
                             onClick={handleUpdateDisplayName}
@@ -230,10 +230,10 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
                             {isUpdatingName ? (
                                 <>
                                     <Spinner />
-                                    Menyimpan...
+                                    Saving...
                                 </>
                             ) : (
-                                'Simpan'
+                                'Save'
                             )}
                         </Button>
                     </DialogFooter>
@@ -247,20 +247,20 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
             }}>
                 <DialogContent className="bg-card border-border">
                     <DialogHeader>
-                        <DialogTitle className="text-card-foreground">🔒 Ubah Password</DialogTitle>
+                        <DialogTitle className="text-card-foreground">🔒 Change Password</DialogTitle>
                         <DialogDescription className="text-muted-foreground">
-                            Masukkan password lama dan password baru Anda
+                            Enter your current password and new password
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                         <div className="space-y-2">
                             <Label htmlFor="current_password" className="text-foreground">
-                                Password Saat Ini
+                                Current Password
                             </Label>
                             <Input
                                 id="current_password"
                                 type="password"
-                                placeholder="Password lama..."
+                                placeholder="Current password..."
                                 value={currentPassword}
                                 onChange={(e) => setCurrentPassword(e.target.value)}
                                 className="bg-background border-input text-foreground"
@@ -268,26 +268,26 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="new_password" className="text-foreground">
-                                Password Baru
+                                New Password
                             </Label>
                             <Input
                                 id="new_password"
                                 type="password"
-                                placeholder="Password baru..."
+                                placeholder="New password..."
                                 value={newPassword}
                                 onChange={(e) => setNewPassword(e.target.value)}
                                 className="bg-background border-input text-foreground"
                             />
-                            <p className="text-xs text-muted-foreground">Minimal 6 karakter</p>
+                            <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="confirm_password" className="text-foreground">
-                                Konfirmasi Password Baru
+                                Confirm New Password
                             </Label>
                             <Input
                                 id="confirm_password"
                                 type="password"
-                                placeholder="Ulangi password baru..."
+                                placeholder="Repeat new password..."
                                 value={confirmPassword}
                                 onChange={(e) => setConfirmPassword(e.target.value)}
                                 className="bg-background border-input text-foreground"
@@ -299,7 +299,7 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
                             variant="outline"
                             onClick={() => setIsPasswordDialogOpen(false)}
                         >
-                            Batal
+                            Cancel
                         </Button>
                         <Button
                             onClick={handleChangePassword}
@@ -308,10 +308,10 @@ export default function ProfileCard({ onLogout }: ProfileCardProps) {
                             {isLoading ? (
                                 <>
                                     <Spinner />
-                                    Menyimpan...
+                                    Saving...
                                 </>
                             ) : (
-                                'Ubah Password'
+                                'Change Password'
                             )}
                         </Button>
                     </DialogFooter>

@@ -63,8 +63,8 @@ ENV MODE=backend
 # Expose both ports (only one will be used depending on mode)
 EXPOSE 1234 3000
 
-# Health check
+# Health check - checks based on MODE environment variable
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:1234/health || curl -f http://localhost:3000/ || exit 1
+    CMD if [ "$MODE" = "frontend" ]; then curl -f http://localhost:3000/; else curl -f http://localhost:1234/health; fi
 
 ENTRYPOINT ["/app/entrypoint.sh"]

@@ -7,6 +7,8 @@ case "$MODE" in
   frontend)
     echo "Starting QIP Frontend..."
     cd /app/frontend
+    export HOSTNAME="0.0.0.0"
+    export PORT="3000"
     exec node server.js
     ;;
   backend)

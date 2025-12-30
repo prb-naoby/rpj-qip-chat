@@ -1500,19 +1500,19 @@ async def validate_append(
                     client = OpenAI(api_key=app_settings.openai_api_key)
                     source_sample = source_df.head(5).to_string()
                     
-                    prompt = f"""Analyze if this new data can be transformed using the same logic as the target table.
+                    prompt = f"""Analisis apakah data baru ini bisa ditransformasi menggunakan logika yang sama dengan tabel target.
 
-TARGET TABLE INFO:
-- Transform explanation: {target_info['transform_explanation'] or 'No explanation stored'}
-- Final columns after transform: {target_columns}
-- Original file: {target_info['original_file']}
+INFO TABEL TARGET:
+- Penjelasan transformasi: {target_info['transform_explanation'] or 'Tidak ada penjelasan tersimpan'}
+- Kolom akhir setelah transformasi: {target_columns}
+- File asli: {target_info['original_file']}
 
-NEW SOURCE DATA (sample):
-Columns: {source_columns}
+DATA SUMBER BARU (sampel):
+Kolom: {source_columns}
 {source_sample}
 
-QUESTION: Is this source data structurally similar to what the original transform was designed for?
-Answer with "YES" or "NO" followed by a brief explanation (1-2 sentences)."""
+PERTANYAAN: Apakah struktur data sumber ini mirip dengan apa yang dirancang untuk transformasi asli?
+Jawab dengan "YES" atau "NO" diikuti penjelasan singkat (1-2 kalimat dalam Bahasa Indonesia)."""
 
                     def _run_llm_check():
                         return client.responses.create(
@@ -1553,7 +1553,7 @@ Answer with "YES" or "NO" followed by a brief explanation (1-2 sentences)."""
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/files/append/preview-transform", response_model=AppendPreviewResponse)
+@router.post("/api/files/append/preview-transform", status_code=202)
 async def preview_append_transform(
     request: AppendPreviewRequest,
     current_user: dict = Depends(get_current_user)
@@ -1561,103 +1561,118 @@ async def preview_append_transform(
     """
     Apply stored transform to source data and return preview.
     If user_feedback is provided, uses LLM to adjust the transform.
+    Returns 202 Accepted with a job ID.
     """
-    try:
-        target_path = Path(request.target_table_id)
-        source_path = Path(request.source_table_id)
-        
-        if not target_path.exists():
-            raise HTTPException(status_code=404, detail="Target table not found")
-        if not source_path.exists():
-            raise HTTPException(status_code=404, detail="Source table not found")
-        
-        # Get stored transform
-        target_info = get_target_table_info(target_path)
-        transform_code = target_info["transform_code"]
-        
-        if not transform_code:
-            return AppendPreviewResponse(
-                success=False,
-                preview_data=[],
-                preview_columns=[],
-                error="Target table has no stored transform code."
-            )
-        
-        
-        # Read source data (offload)
-        source_df = await run_in_threadpool(pd.read_parquet, source_path)
-        
-        # If user provided feedback, regenerate the transform
-        if request.user_feedback:
-            result = await run_in_threadpool(
-                regenerate_with_feedback,
-                df=source_df,
-                previous_code=transform_code,
-                user_feedback=request.user_feedback,
-                filename=str(source_path.name)
-            )
+    def _do_preview_transform(source_table_id, target_table_id, user_feedback):
+        """Background job to preview transform."""
+        try:
+            target_path = Path(target_table_id)
+            source_path = Path(source_table_id)
             
-            if result.has_error:
-                return AppendPreviewResponse(
-                    success=False,
-                    preview_data=[],
-                    preview_columns=[],
-                    error=f"Failed to adjust transform: {result.explanation}"
+            if not target_path.exists():
+                return {"success": False, "error": "Target table not found"}
+            if not source_path.exists():
+                return {"success": False, "error": "Source table not found"}
+            
+            # Get stored transform
+            target_info = get_target_table_info(target_path)
+            transform_code = target_info["transform_code"]
+            
+            if not transform_code:
+                return {
+                    "success": False,
+                    "preview_data": [],
+                    "preview_columns": [],
+                    "error": "Target table has no stored transform code."
+                }
+            
+            # Read source data
+            source_df = pd.read_parquet(source_path)
+            
+            # If user provided feedback, regenerate the transform
+            if user_feedback:
+                result = regenerate_with_feedback(
+                    df=source_df,
+                    previous_code=transform_code,
+                    user_feedback=user_feedback,
+                    filename=str(source_path.name)
                 )
+                
+                if result.has_error:
+                    return {
+                        "success": False,
+                        "preview_data": [],
+                        "preview_columns": [],
+                        "error": f"Failed to adjust transform: {result.explanation}"
+                    }
+                
+                transform_code = result.transform_code
             
-            transform_code = result.transform_code
-        
-        # Apply transform (offload)
-        transformed_df, error = await run_in_threadpool(
-            apply_stored_transform,
-            source_df=source_df,
-            transform_code=transform_code,
-            preview_only=True,
-            max_preview_rows=100
-        )
-        
-        if error:
-            return AppendPreviewResponse(
-                success=False,
-                preview_data=[],
-                preview_columns=[],
-                error=error
+            # Apply transform
+            transformed_df, error = apply_stored_transform(
+                source_df=source_df,
+                transform_code=transform_code,
+                preview_only=True,
+                max_preview_rows=100
             )
-        
-        # Validate that transformed columns match target
-        target_columns = set(target_info["columns"])
-        transformed_columns = set(transformed_df.columns)
-        
-        if target_columns != transformed_columns:
-            missing = target_columns - transformed_columns
-            extra = transformed_columns - target_columns
-            issue_parts = []
-            if missing:
-                issue_parts.append(f"Missing: {', '.join(sorted(missing))}")
-            if extra:
-                issue_parts.append(f"Extra: {', '.join(sorted(extra))}")
             
-            return AppendPreviewResponse(
-                success=False,
-                preview_data=[],
-                preview_columns=list(transformed_df.columns),
-                error=f"Transform output doesn't match target schema. {'; '.join(issue_parts)}"
-            )
-        
-        # Success!
-        preview_data = transformed_df.head(20).fillna("").to_dict(orient="records")
-        
-        return AppendPreviewResponse(
-            success=True,
-            preview_data=preview_data,
-            preview_columns=list(transformed_df.columns),
-            error=None
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            if error:
+                return {
+                    "success": False,
+                    "preview_data": [],
+                    "preview_columns": [],
+                    "error": error
+                }
+            
+            # Validate that transformed columns match target
+            target_columns = set(target_info["columns"])
+            transformed_columns = set(transformed_df.columns)
+            
+            if target_columns != transformed_columns:
+                missing = target_columns - transformed_columns
+                extra = transformed_columns - target_columns
+                issue_parts = []
+                if missing:
+                    issue_parts.append(f"Missing: {', '.join(sorted(missing))}")
+                if extra:
+                    issue_parts.append(f"Extra: {', '.join(sorted(extra))}")
+                
+                return {
+                    "success": False,
+                    "preview_data": [],
+                    "preview_columns": list(transformed_df.columns),
+                    "error": f"Transform output doesn't match target schema. {'; '.join(issue_parts)}"
+                }
+            
+            # Success!
+            preview_data = transformed_df.head(20).fillna("").to_dict(orient="records")
+            
+            return {
+                "success": True,
+                "preview_data": preview_data,
+                "preview_columns": list(transformed_df.columns),
+                "error": None
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "preview_data": [],
+                "preview_columns": [],
+                "error": f"Preview transform failed: {str(e)}"
+            }
+    
+    # Submit to job manager
+    job_id = job_manager.submit_job(
+        _do_preview_transform,
+        current_user["id"],
+        "preview_transform",
+        request.source_table_id,
+        request.target_table_id,
+        request.user_feedback
+    )
+    
+    return {"job_id": job_id, "message": "Preview transform started"}
 
 
 @router.post("/api/files/append/confirm-transform", status_code=202)
@@ -1727,7 +1742,7 @@ async def confirm_append_transform(
     return {"job_id": job_id, "message": "Append with transform started"}
 
 
-@router.post("/api/files/append/generate-transform", response_model=AppendPreviewResponse)
+@router.post("/api/files/append/generate-transform", status_code=202)
 async def generate_append_transform(
     request: AppendGenerateTransformRequest,
     current_user: dict = Depends(get_current_user)
@@ -1735,37 +1750,39 @@ async def generate_append_transform(
     """
     Generate a NEW transform that maps source data to target table's column structure.
     Uses LLM to analyze source data and create transformation code to match target schema.
+    Returns 202 Accepted with a job ID.
     """
-    try:
-        target_path = Path(request.target_table_id)
-        source_path = Path(request.source_table_id)
-        
-        if not target_path.exists():
-            raise HTTPException(status_code=404, detail="Target table not found")
-        if not source_path.exists():
-            raise HTTPException(status_code=404, detail="Source table not found")
-        
-        # Get target table info
-        target_info = get_target_table_info(target_path)
-        target_columns = target_info["columns"]
-        
-        # Read source data for analysis (offload)
-        source_df = await run_in_threadpool(pd.read_parquet, source_path)
-        source_sample = source_df.head(10).to_string()
-        source_columns = list(source_df.columns)
-        
-        # Generate transform using LLM
-        app_settings = AppSettings()
-        
-        if not app_settings.openai_api_key:
-            return AppendPreviewResponse(
-                success=False,
-                preview_data=[],
-                preview_columns=[],
-                error="No API key configured for transform generation."
-            )
-        
+    def _do_generate_transform(source_table_id, target_table_id, user_description):
+        """Background job to generate transform."""
         try:
+            target_path = Path(target_table_id)
+            source_path = Path(source_table_id)
+            
+            if not target_path.exists():
+                return {"success": False, "error": "Target table not found"}
+            if not source_path.exists():
+                return {"success": False, "error": "Source table not found"}
+            
+            # Get target table info
+            target_info = get_target_table_info(target_path)
+            target_columns = target_info["columns"]
+            
+            # Read source data for analysis
+            source_df = pd.read_parquet(source_path)
+            source_sample = source_df.head(10).to_string()
+            source_columns = list(source_df.columns)
+            
+            # Generate transform using LLM
+            app_settings = AppSettings()
+            
+            if not app_settings.openai_api_key:
+                return {
+                    "success": False,
+                    "preview_data": [],
+                    "preview_columns": [],
+                    "error": "No API key configured for transform generation."
+                }
+            
             from openai import OpenAI
             client = OpenAI(api_key=app_settings.openai_api_key)
             
@@ -1779,7 +1796,7 @@ Columns: {source_columns}
 {source_sample}
 
 USER GUIDANCE:
-{request.user_description or 'No specific guidance provided. Please infer column mappings.'}
+{user_description or 'No specific guidance provided. Please infer column mappings.'}
 
 REQUIREMENTS:
 1. Input DataFrame is named `df`
@@ -1793,21 +1810,18 @@ REQUIREMENTS:
 
 Generate the Python code:"""
 
-            def _run_llm_gen():
-                return client.responses.create(
-                    model=app_settings.default_llm_model,
-                    input=prompt,
-                )
-            
-            response = await run_in_threadpool(_run_llm_gen)
+            response = client.responses.create(
+                model=app_settings.default_llm_model,
+                input=prompt,
+            )
             
             if not response.output_text:
-                return AppendPreviewResponse(
-                    success=False,
-                    preview_data=[],
-                    preview_columns=[],
-                    error="LLM returned empty response"
-                )
+                return {
+                    "success": False,
+                    "preview_data": [],
+                    "preview_columns": [],
+                    "error": "LLM returned empty response"
+                }
             
             # Extract code from response
             transform_code = response.output_text.strip()
@@ -1818,9 +1832,8 @@ Generate the Python code:"""
             elif "```" in transform_code:
                 transform_code = transform_code.split("```")[1].split("```")[0].strip()
             
-            # Apply the generated transform (offload)
-            transformed_df, error = await run_in_threadpool(
-                apply_stored_transform,
+            # Apply the generated transform
+            transformed_df, error = apply_stored_transform(
                 source_df=source_df,
                 transform_code=transform_code,
                 preview_only=True,
@@ -1828,12 +1841,12 @@ Generate the Python code:"""
             )
             
             if error:
-                return AppendPreviewResponse(
-                    success=False,
-                    preview_data=[],
-                    preview_columns=[],
-                    error=f"Generated transform failed: {error}\n\nCode:\n{transform_code[:500]}..."
-                )
+                return {
+                    "success": False,
+                    "preview_data": [],
+                    "preview_columns": [],
+                    "error": f"Generated transform failed: {error}\n\nCode:\n{transform_code[:500]}..."
+                }
             
             # Validate columns match
             if set(transformed_df.columns) != set(target_columns):
@@ -1845,36 +1858,44 @@ Generate the Python code:"""
                 if extra:
                     issue_parts.append(f"Extra: {', '.join(sorted(extra))}")
                 
-                return AppendPreviewResponse(
-                    success=False,
-                    preview_data=[],
-                    preview_columns=list(transformed_df.columns),
-                    error=f"Generated transform doesn't produce correct schema. {'; '.join(issue_parts)}"
-                )
+                return {
+                    "success": False,
+                    "preview_data": [],
+                    "preview_columns": list(transformed_df.columns),
+                    "error": f"Generated transform doesn't produce correct schema. {'; '.join(issue_parts)}"
+                }
             
             # Success!
             preview_data = transformed_df.head(20).fillna("").to_dict(orient="records")
             
-            return AppendPreviewResponse(
-                success=True,
-                preview_data=preview_data,
-                preview_columns=list(transformed_df.columns),
-                error=None,
-                generated_code=transform_code
-            )
+            return {
+                "success": True,
+                "preview_data": preview_data,
+                "preview_columns": list(transformed_df.columns),
+                "error": None,
+                "generated_code": transform_code
+            }
             
         except Exception as e:
-            return AppendPreviewResponse(
-                success=False,
-                preview_data=[],
-                preview_columns=[],
-                error=f"Transform generation failed: {str(e)}"
-            )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            return {
+                "success": False,
+                "preview_data": [],
+                "preview_columns": [],
+                "error": f"Transform generation failed: {str(e)}"
+            }
+    
+    # Submit to job manager
+    job_id = job_manager.submit_job(
+        _do_generate_transform,
+        current_user["id"],
+        "generate_transform",
+        request.source_table_id,
+        request.target_table_id,
+        request.user_description
+    )
+    
+    return {"job_id": job_id, "message": "Transform generation started"}
+
 
 
 @router.post("/api/files/analyze", status_code=202)
@@ -1972,43 +1993,68 @@ async def analyze_file(
     return {"job_id": job_id, "message": "Analysis started"}
 
 
-@router.post("/api/files/transform/preview", response_model=TransformPreviewResponse)
+@router.post("/api/files/transform/preview", status_code=202)
 async def preview_transform(
     request: TransformRequest,
     current_user: dict = Depends(get_current_user)
 ):
     """
     Execute transformation code and return preview without saving.
+    Returns 202 Accepted with a job ID.
     """
-    try:
-        cache_path = Path(request.table_id)
-        if not cache_path.exists():
-            raise HTTPException(status_code=404, detail="Table not found")
-        
-        df = await run_in_threadpool(pd.read_parquet, cache_path)
-        
-        # Execute transform (offload)
-        transformed_df, error = await run_in_threadpool(execute_transform, df, request.transform_code)
-        
-        if error:
-            return TransformPreviewResponse(
-                preview_data=[],
-                columns=[],
-                total_rows=0,
-                error=error
-            )
+    def _do_transform_preview(table_id, transform_code):
+        """Background job to preview transform."""
+        try:
+            cache_path = Path(table_id)
+            if not cache_path.exists():
+                return {
+                    "preview_data": [],
+                    "columns": [],
+                    "total_rows": 0,
+                    "error": "Table not found"
+                }
             
-        # Success
-        preview_df = transformed_df.head(20).fillna("")
-        
-        return TransformPreviewResponse(
-            preview_data=preview_df.to_dict(orient="records"),
-            columns=list(transformed_df.columns),
-            total_rows=len(transformed_df)
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            df = pd.read_parquet(cache_path)
+            
+            # Execute transform
+            transformed_df, error = execute_transform(df, transform_code)
+            
+            if error:
+                return {
+                    "preview_data": [],
+                    "columns": [],
+                    "total_rows": 0,
+                    "error": error
+                }
+                
+            # Success
+            preview_df = transformed_df.head(20).fillna("")
+            
+            return {
+                "preview_data": preview_df.to_dict(orient="records"),
+                "columns": list(transformed_df.columns),
+                "total_rows": len(transformed_df),
+                "error": None
+            }
+            
+        except Exception as e:
+            return {
+                "preview_data": [],
+                "columns": [],
+                "total_rows": 0,
+                "error": f"Transform preview failed: {str(e)}"
+            }
+    
+    # Submit to job manager
+    job_id = job_manager.submit_job(
+        _do_transform_preview,
+        current_user["id"],
+        "transform_preview",
+        request.table_id,
+        request.transform_code
+    )
+    
+    return {"job_id": job_id, "message": "Transform preview started"}
 
 
 @router.post("/api/files/transform/confirm", status_code=202)

@@ -62,19 +62,19 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
     // Handle display name update
     const handleUpdateDisplayName = async () => {
         if (!newDisplayName.trim()) {
-            toast.error('Nama tampilan tidak boleh kosong');
+            toast.error('Display name cannot be empty');
             return;
         }
 
         setIsUpdatingName(true);
         try {
             await api.updateProfile(newDisplayName.trim());
-            toast.success('✅ Nama tampilan berhasil diperbarui');
+            toast.success('✅ Display name updated successfully');
             dispatch(fetchCurrentUser());
             setIsNameDialogOpen(false);
             setNewDisplayName('');
         } catch (error: any) {
-            toast.error(`Gagal memperbarui: ${error.response?.data?.detail || error.message}`);
+            toast.error(`Failed to update: ${error.response?.data?.detail || error.message}`);
         } finally {
             setIsUpdatingName(false);
         }
@@ -83,17 +83,17 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
     // Handle password change
     const handleChangePassword = async () => {
         if (!currentPassword || !newPassword) {
-            toast.error('Semua field harus diisi');
+            toast.error('All fields are required');
             return;
         }
 
         if (newPassword !== confirmPassword) {
-            toast.error('Password baru tidak cocok');
+            toast.error('New passwords do not match');
             return;
         }
 
         if (newPassword.length < 6) {
-            toast.error('Password minimal 6 karakter');
+            toast.error('Password must be at least 6 characters');
             return;
         }
 
@@ -103,13 +103,13 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
                 new_password: newPassword,
             })).unwrap();
 
-            toast.success('✅ Password berhasil diubah');
+            toast.success('✅ Password changed successfully');
             setIsPasswordDialogOpen(false);
             setCurrentPassword('');
             setNewPassword('');
             setConfirmPassword('');
         } catch (error: any) {
-            toast.error(`Gagal mengubah password: ${error}`);
+            toast.error(`Failed to change password: ${error}`);
         }
     };
 
@@ -128,29 +128,29 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
             <SheetTrigger asChild>
                 {trigger || (
                     <Button variant="ghost" size="sm" className="w-full justify-start">
-                        ⚙️ Pengaturan
+                        ⚙️ Settings
                     </Button>
                 )}
             </SheetTrigger>
             <SheetContent className="bg-slate-800 border-slate-700 text-white">
                 <SheetHeader>
-                    <SheetTitle className="text-white">⚙️ Pengaturan Akun</SheetTitle>
+                    <SheetTitle className="text-white">⚙️ Account Settings</SheetTitle>
                     <SheetDescription className="text-slate-400">
-                        Kelola profil dan keamanan akun Anda
+                        Manage your profile and account security
                     </SheetDescription>
                 </SheetHeader>
 
                 <div className="py-6 space-y-6">
                     {/* User Info Section */}
                     <div className="space-y-2">
-                        <h3 className="text-sm font-medium text-slate-300">Informasi Akun</h3>
+                        <h3 className="text-sm font-medium text-slate-300">Account Information</h3>
                         <div className="p-4 bg-slate-700/50 rounded-lg space-y-3">
                             <div className="flex items-center justify-between">
                                 <span className="text-sm text-slate-400">Username</span>
                                 <span className="font-medium">{user?.username}</span>
                             </div>
                             <div className="flex items-center justify-between">
-                                <span className="text-sm text-slate-400">Nama Tampilan</span>
+                                <span className="text-sm text-slate-400">Display Name</span>
                                 <span className="font-medium">{user?.display_name || user?.username}</span>
                             </div>
                             <div className="flex items-center justify-between">
@@ -166,31 +166,31 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
 
                     {/* Edit Display Name */}
                     <div className="space-y-3">
-                        <h3 className="text-sm font-medium text-slate-300">Ubah Nama Tampilan</h3>
+                        <h3 className="text-sm font-medium text-slate-300">Change Display Name</h3>
                         <Dialog open={isNameDialogOpen} onOpenChange={(open) => {
                             setIsNameDialogOpen(open);
                             if (open) resetNameForm();
                         }}>
                             <DialogTrigger asChild>
                                 <Button variant="outline" className="w-full border-slate-600 text-slate-300 hover:bg-slate-700">
-                                    ✏️ Edit Nama Tampilan
+                                    ✏️ Edit Display Name
                                 </Button>
                             </DialogTrigger>
                             <DialogContent className="bg-slate-800 border-slate-700">
                                 <DialogHeader>
-                                    <DialogTitle className="text-white">✏️ Ubah Nama Tampilan</DialogTitle>
+                                    <DialogTitle className="text-white">✏️ Change Display Name</DialogTitle>
                                     <DialogDescription className="text-slate-400">
-                                        Nama ini akan ditampilkan di aplikasi
+                                        This name will be displayed in the application
                                     </DialogDescription>
                                 </DialogHeader>
                                 <div className="space-y-4 py-4">
                                     <div className="space-y-2">
                                         <Label htmlFor="display_name" className="text-slate-200">
-                                            Nama Tampilan Baru
+                                            New Display Name
                                         </Label>
                                         <Input
                                             id="display_name"
-                                            placeholder="Masukkan nama baru..."
+                                            placeholder="Enter new name..."
                                             value={newDisplayName}
                                             onChange={(e) => setNewDisplayName(e.target.value)}
                                             className="bg-slate-700/50 border-slate-600 text-white"
@@ -203,7 +203,7 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
                                         onClick={() => setIsNameDialogOpen(false)}
                                         className="border-slate-600"
                                     >
-                                        Batal
+                                        Cancel
                                     </Button>
                                     <Button
                                         onClick={handleUpdateDisplayName}
@@ -213,10 +213,10 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
                                         {isUpdatingName ? (
                                             <>
                                                 <Spinner />
-                                                Menyimpan...
+                                                Saving...
                                             </>
                                         ) : (
-                                            'Simpan'
+                                            'Save'
                                         )}
                                     </Button>
                                 </DialogFooter>
@@ -228,32 +228,32 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
 
                     {/* Change Password */}
                     <div className="space-y-3">
-                        <h3 className="text-sm font-medium text-slate-300">Keamanan</h3>
+                        <h3 className="text-sm font-medium text-slate-300">Security</h3>
                         <Dialog open={isPasswordDialogOpen} onOpenChange={(open) => {
                             setIsPasswordDialogOpen(open);
                             if (!open) resetPasswordForm();
                         }}>
                             <DialogTrigger asChild>
                                 <Button variant="outline" className="w-full border-slate-600 text-slate-300 hover:bg-slate-700">
-                                    🔒 Ubah Password
+                                    🔒 Change Password
                                 </Button>
                             </DialogTrigger>
                             <DialogContent className="bg-slate-800 border-slate-700">
                                 <DialogHeader>
-                                    <DialogTitle className="text-white">🔒 Ubah Password</DialogTitle>
+                                    <DialogTitle className="text-white">🔒 Change Password</DialogTitle>
                                     <DialogDescription className="text-slate-400">
-                                        Masukkan password lama dan password baru Anda
+                                        Enter your current password and new password
                                     </DialogDescription>
                                 </DialogHeader>
                                 <div className="space-y-4 py-4">
                                     <div className="space-y-2">
                                         <Label htmlFor="current_password" className="text-slate-200">
-                                            Password Saat Ini
+                                            Current Password
                                         </Label>
                                         <Input
                                             id="current_password"
                                             type="password"
-                                            placeholder="Password lama..."
+                                            placeholder="Current password..."
                                             value={currentPassword}
                                             onChange={(e) => setCurrentPassword(e.target.value)}
                                             className="bg-slate-700/50 border-slate-600 text-white"
@@ -261,12 +261,12 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
                                     </div>
                                     <div className="space-y-2">
                                         <Label htmlFor="new_password" className="text-slate-200">
-                                            Password Baru
+                                            New Password
                                         </Label>
                                         <Input
                                             id="new_password"
                                             type="password"
-                                            placeholder="Password baru (min 6 karakter)..."
+                                            placeholder="New password (min 6 characters)..."
                                             value={newPassword}
                                             onChange={(e) => setNewPassword(e.target.value)}
                                             className="bg-slate-700/50 border-slate-600 text-white"
@@ -274,12 +274,12 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
                                     </div>
                                     <div className="space-y-2">
                                         <Label htmlFor="confirm_password" className="text-slate-200">
-                                            Konfirmasi Password Baru
+                                            Confirm New Password
                                         </Label>
                                         <Input
                                             id="confirm_password"
                                             type="password"
-                                            placeholder="Ulangi password baru..."
+                                            placeholder="Repeat new password..."
                                             value={confirmPassword}
                                             onChange={(e) => setConfirmPassword(e.target.value)}
                                             className="bg-slate-700/50 border-slate-600 text-white"
@@ -292,7 +292,7 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
                                         onClick={() => setIsPasswordDialogOpen(false)}
                                         className="border-slate-600"
                                     >
-                                        Batal
+                                        Cancel
                                     </Button>
                                     <Button
                                         onClick={handleChangePassword}
@@ -302,10 +302,10 @@ export default function UserSettings({ trigger }: UserSettingsProps) {
                                         {isLoading ? (
                                             <>
                                                 <Spinner />
-                                                Menyimpan...
+                                                Saving...
                                             </>
                                         ) : (
-                                            'Ubah Password'
+                                            'Change Password'
                                         )}
                                     </Button>
                                 </DialogFooter>

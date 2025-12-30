@@ -251,9 +251,41 @@ export const api = {
     clearJobs: (period: 'hour' | 'today' | '3days' | 'all') =>
         apiClient.delete('/api/jobs/clear', { params: { period } }),
 
+
     // Signup (public)
     signup: (username: string, password: string, email?: string) =>
         apiClient.post('/auth/signup', { username, password, email }),
+};
+
+/**
+ * Helper to poll a job until it completes.
+ * @param jobId - The job ID to poll
+ * @param intervalMs - Polling interval in ms (default 500)
+ * @param maxAttempts - Maximum poll attempts (default 120 = 60s at 500ms intervals)
+ * @returns The job result when complete
+ */
+export const pollJobUntilComplete = async (
+    jobId: string,
+    intervalMs: number = 500,
+    maxAttempts: number = 120
+): Promise<any> => {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const response = await api.getJobStatus(jobId);
+        const job = response.data;
+
+        if (job.status === 'done') {
+            return job.result;
+        }
+
+        if (job.status === 'failed') {
+            throw new Error(job.error || 'Job failed');
+        }
+
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+
+    throw new Error('Job timed out');
 };
 
 export default api;

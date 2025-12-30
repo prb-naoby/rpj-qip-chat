@@ -129,11 +129,11 @@ export default function ManageTab() {
         setIsSavingDescription(true);
         try {
             await api.updateTableDescription(editTarget.cachePath, editDescription, editName);
-            toast.success(`✅ Perubahan berhasil disimpan`);
+            toast.success(`✅ Changes saved successfully`);
             dispatch(fetchTables());
             setEditTarget(null);
         } catch (error: any) {
-            toast.error(`Gagal menyimpan: ${error.response?.data?.detail || error.message}`);
+            toast.error(`Failed to save: ${error.response?.data?.detail || error.message}`);
         } finally {
             setIsSavingDescription(false);
         }
@@ -179,8 +179,8 @@ export default function ManageTab() {
                     {tables.length === 0 ? (
                         <div className="text-center py-8 text-muted-foreground">
                             <div className="text-4xl mb-4">📊</div>
-                            <p>Belum ada tabel yang di-cache.</p>
-                            <p className="text-sm">Upload file atau sync dari OneDrive untuk memulai.</p>
+                            <p>No tables cached yet.</p>
+                            <p className="text-sm">Upload a file or sync from OneDrive to get started.</p>
                         </div>
                     ) : (
                         <Collapsible defaultOpen>
@@ -349,7 +349,7 @@ export default function ManageTab() {
                                                                                 displayName: table.display_name
                                                                             })}
                                                                             className="text-destructive hover:text-destructive hover:bg-destructive/10 active:scale-[0.95]"
-                                                                            aria-label={`Hapus tabel ${table.display_name}`}
+                                                                            aria-label={`Delete table ${table.display_name}`}
                                                                         >
                                                                             🗑️
                                                                         </Button>

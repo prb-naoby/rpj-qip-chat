@@ -13,7 +13,7 @@ import { useState, useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { fetchTables } from '@/store/slices/tablesSlice';
 import { RootState } from '@/store';
-import { api } from '@/lib/api';
+import { api, pollJobUntilComplete } from '@/lib/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -190,9 +190,9 @@ export default function OneDriveTab() {
             // Load ALL files (no subfolder filter) - UI will group by folder
             const response = await api.listOneDriveFiles();
             dispatch(setFiles(response.data));
-            toast.success(`✅ ${response.data.length} file ditemukan`);
+            toast.success(`✅ ${response.data.length} files found`);
         } catch (error: any) {
-            toast.error(`Gagal memuat file: ${error.response?.data?.detail || error.message}`);
+            toast.error(`Failed to load files: ${error.response?.data?.detail || error.message}`);
         } finally {
             setIsLoading(false);
         }
@@ -282,17 +282,23 @@ export default function OneDriveTab() {
 
                     // Automatically preview if we have code
                     if (job.result.transform_code) {
-                        // We can trigger preview here or let user click. 
-                        // Let's auto-preview to match previous behavior (but carefully).
-                        api.previewTransform(previewTableId!, job.result.transform_code)
-                            .then(res => {
-                                if (!res.data.error) {
+                        // Submit preview job and poll for result
+                        (async () => {
+                            try {
+                                const jobResponse = await api.previewTransform(previewTableId!, job.result.transform_code);
+                                const previewJobId = jobResponse.data.job_id;
+                                const result = await pollJobUntilComplete(previewJobId);
+
+                                if (!result.error) {
                                     dispatch(setTransformedPreview({
-                                        columns: res.data.columns,
-                                        preview_data: res.data.preview_data
+                                        columns: result.columns,
+                                        preview_data: result.preview_data
                                     }));
                                 }
-                            });
+                            } catch (err) {
+                                console.error('Auto-preview failed:', err);
+                            }
+                        })();
                     }
 
                     setIsOriginalPreviewExpanded(false);
@@ -490,27 +496,32 @@ export default function OneDriveTab() {
         setAppendTransformPreview(null);
 
         try {
-            const response = await api.generateAppendTransform(
+            // Submit job and get job_id
+            const jobResponse = await api.generateAppendTransform(
                 previewTableId,
                 targetTableId,
                 mappingDescription || ''
             );
-            setAppendTransformPreview(response.data);
+            const jobId = jobResponse.data.job_id;
 
-            if (response.data.success) {
-                if (response.data.generated_code) {
-                    setGeneratedTransformCode(response.data.generated_code);
+            // Poll until complete
+            const result = await pollJobUntilComplete(jobId);
+            setAppendTransformPreview(result);
+
+            if (result.success) {
+                if (result.generated_code) {
+                    setGeneratedTransformCode(result.generated_code);
                 }
                 toast.success('✨ Transform generated successfully!');
             } else {
-                toast.error('Transform generation failed - try adding more description');
+                toast.error(result.error || 'Transform generation failed - try adding more description');
             }
         } catch (error: any) {
             setAppendTransformPreview({
                 success: false,
                 preview_data: [],
                 preview_columns: [],
-                error: error.response?.data?.detail || error.message
+                error: error.message || 'Failed to generate transform'
             });
             toast.error('Failed to generate transform');
         } finally {
@@ -552,25 +563,30 @@ export default function OneDriveTab() {
         setAppendTransformPreview(null);
 
         try {
-            const response = await api.previewAppendTransform(
+            // Submit job and get job_id
+            const jobResponse = await api.previewAppendTransform(
                 previewTableId,
                 targetTableId,
                 feedback || transformFeedback || undefined
             );
-            setAppendTransformPreview(response.data);
+            const jobId = jobResponse.data.job_id;
 
-            if (response.data.success) {
+            // Poll until complete
+            const result = await pollJobUntilComplete(jobId);
+            setAppendTransformPreview(result);
+
+            if (result.success) {
                 toast.success('✨ Transform preview ready!');
                 setTransformFeedback('');
             } else {
-                toast.error('Transform failed - provide feedback to fix');
+                toast.error(result.error || 'Transform failed - provide feedback to fix');
             }
         } catch (error: any) {
             setAppendTransformPreview({
                 success: false,
                 preview_data: [],
                 preview_columns: [],
-                error: error.response?.data?.detail || error.message
+                error: error.message || 'Preview failed'
             });
             toast.error('Preview failed');
         } finally {
@@ -720,7 +736,7 @@ export default function OneDriveTab() {
                             {/* File List - Grouped by Folder */}
                             {files.length === 0 ? (
                                 <p className="text-muted-foreground">
-                                    Klik 'Refresh' untuk memuat file dari OneDrive.
+                                    Click 'Refresh' to load files from OneDrive.
                                 </p>
                             ) : (
                                 <ScrollArea className="h-[400px]">

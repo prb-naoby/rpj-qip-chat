@@ -312,7 +312,7 @@ export default function UploadTab() {
             setOneDriveSubfolders(response.data);
             toast.success(`📁 ${response.data.length} folder ditemukan`);
         } catch (error: any) {
-            toast.error(`Gagal memuat folder: ${error.response?.data?.detail || error.message}`);
+            toast.error(`Failed to load folders: ${error.response?.data?.detail || error.message}`);
         } finally {
             setIsLoadingFolders(false);
         }
@@ -338,7 +338,7 @@ export default function UploadTab() {
                 setUploadFilename('');
             }
         } catch (error: any) {
-            toast.error(`Upload gagal: ${error.response?.data?.detail || error.message}`);
+            toast.error(`Upload failed: ${error.response?.data?.detail || error.message}`);
         } finally {
             setIsUploadingToOneDrive(false);
         }
@@ -633,19 +633,19 @@ export default function UploadTab() {
                         <CardHeader className="pb-2">
                             <CardTitle className="text-base flex items-center gap-2">
                                 <Cloud className="w-4 h-4 text-blue-500" />
-                                Upload ke OneDrive
+                                Upload to OneDrive
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <div className="flex gap-2 items-end">
                                 <div className="flex-1 space-y-1">
-                                    <Label className="text-sm">📁 Pilih Folder Tujuan:</Label>
+                                    <Label className="text-sm">📁 Select Destination Folder:</Label>
                                     <Select
                                         value={selectedOneDriveFolder}
                                         onValueChange={setSelectedOneDriveFolder}
                                     >
                                         <SelectTrigger>
-                                            <SelectValue placeholder="Pilih folder..." />
+                                            <SelectValue placeholder="Select folder..." />
                                         </SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="__root__">
@@ -670,9 +670,9 @@ export default function UploadTab() {
                             </div>
 
                             <div className="space-y-1">
-                                <Label className="text-sm">📄 Nama File (opsional):</Label>
+                                <Label className="text-sm">📄 File Name (optional):</Label>
                                 <Input
-                                    placeholder="Kosongkan untuk gunakan nama default..."
+                                    placeholder="Leave empty to use default name..."
                                     value={uploadFilename}
                                     onChange={(e) => setUploadFilename(e.target.value)}
                                 />
@@ -691,7 +691,7 @@ export default function UploadTab() {
                                 ) : (
                                     <>
                                         <Upload className="w-4 h-4" />
-                                        ☁️ Upload ke OneDrive
+                                        ☁️ Upload to OneDrive
                                     </>
                                 )}
                             </Button>

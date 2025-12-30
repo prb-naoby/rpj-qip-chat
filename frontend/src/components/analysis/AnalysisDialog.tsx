@@ -29,7 +29,7 @@ import { Badge } from '@/components/ui/badge';
 import { Wand2, Play, Save, AlertTriangle, ChevronDown, Code, Database, ArrowRight, Eye, Sparkles } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { api } from '@/lib/api';
+import { api, pollJobUntilComplete } from '@/lib/api';
 import { toast } from 'sonner';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
@@ -131,14 +131,20 @@ export function AnalysisDialog({ tableId, tableName, isOpen, onClose, onSuccess,
         setStep('previewing');
         setPreviewError(null);
         try {
-            const res = await api.previewTransform(tableId, editedCode);
-            if (res.data.error) {
-                setPreviewError(res.data.error);
+            // Submit job and get job_id
+            const jobResponse = await api.previewTransform(tableId, editedCode);
+            const jobId = jobResponse.data.job_id;
+
+            // Poll until complete
+            const result = await pollJobUntilComplete(jobId);
+
+            if (result.error) {
+                setPreviewError(result.error);
             } else {
-                setPreviewData({ columns: res.data.columns, data: res.data.preview_data });
+                setPreviewData({ columns: result.columns, data: result.preview_data });
             }
         } catch (error: any) {
-            setPreviewError(error.response?.data?.detail || error.message);
+            setPreviewError(error.message || 'Preview failed');
         } finally {
             setStep('review');
         }

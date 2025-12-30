@@ -10,7 +10,7 @@ interface TypingIndicatorProps {
     message?: string;
 }
 
-export function TypingIndicator({ message = 'Memproses...' }: TypingIndicatorProps) {
+export function TypingIndicator({ message = 'Processing...' }: TypingIndicatorProps) {
     return (
         <div className="flex items-center gap-2 text-muted-foreground">
             <div className="flex gap-1">

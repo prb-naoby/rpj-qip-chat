@@ -38,11 +38,12 @@ def generate_chat_title(
 
         # v1 SDK: client.models.generate_content
         prompt = f"""
-        Generate a very short, concise title (max 4-5 words) for a chat session that starts with:
+        Buat judul singkat dan padat (maksimal 4-5 kata) untuk sesi chat yang dimulai dengan:
         User: {first_question}
         AI: {first_answer}
         
-        The title should summarize the user's intent. Do not use quotes.
+        Judul harus merangkum maksud user. Jangan gunakan tanda kutip.
+        Gunakan bahasa Indonesia.
         """
         
         response = client.models.generate_content(
@@ -90,11 +91,12 @@ def generate_chat_title_from_conversation(conversation_pairs: list) -> str:
         print(f"[TITLE-GEN] Conversation summary:\n{conversation_text[:200]}...")
 
         prompt = f"""
-        Generate a very short, concise title (max 4-5 words) summarizing this conversation:
+        Buat judul singkat dan padat (maksimal 4-5 kata) yang merangkum percakapan ini:
         
         {conversation_text}
         
-        The title should capture the main topic or intent. Do not use quotes.
+        Judul harus menangkap topik atau maksud utama. Jangan gunakan tanda kutip.
+        Gunakan bahasa Indonesia.
         """
         
         print("[TITLE-GEN] Calling Gemini API...")

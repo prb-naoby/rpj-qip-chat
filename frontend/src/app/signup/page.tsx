@@ -33,12 +33,12 @@ export default function SignupPage() {
         setError(null);
 
         if (password !== confirmPassword) {
-            setError('Password tidak cocok');
+            setError('Passwords do not match');
             return;
         }
 
         if (password.length < 6) {
-            setError('Password minimal 6 karakter');
+            setError('Password must be at least 6 characters');
             return;
         }
 
@@ -69,15 +69,15 @@ export default function SignupPage() {
                         <CardContent className="pt-6">
                             <Alert className="border-green-500/50 bg-green-500/10">
                                 <CheckCircle className="h-5 w-5 text-green-500" />
-                                <AlertTitle className="text-green-600">Pendaftaran Berhasil!</AlertTitle>
+                                <AlertTitle className="text-green-600">Registration Successful!</AlertTitle>
                                 <AlertDescription className="text-muted-foreground">
-                                    Akun Anda sedang menunggu persetujuan admin.
-                                    Anda akan bisa login setelah admin menyetujui pendaftaran Anda.
+                                    Your account is pending admin approval.
+                                    You will be able to login once an admin approves your registration.
                                 </AlertDescription>
                             </Alert>
                             <div className="mt-6 text-center">
                                 <Button onClick={() => router.push('/login')} className="w-full">
-                                    Kembali ke Login
+                                    Back to Login
                                 </Button>
                             </div>
                         </CardContent>
@@ -109,9 +109,9 @@ export default function SignupPage() {
                         >
                             📝
                         </motion.div>
-                        <CardTitle className="text-2xl font-bold text-card-foreground">Daftar Akun Baru</CardTitle>
+                        <CardTitle className="text-2xl font-bold text-card-foreground">Create New Account</CardTitle>
                         <CardDescription className="text-muted-foreground">
-                            Isi form berikut untuk mendaftar
+                            Fill in the form below to register
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -121,7 +121,7 @@ export default function SignupPage() {
                                 <Input
                                     id="username"
                                     type="text"
-                                    placeholder="Masukkan username..."
+                                    placeholder="Enter username..."
                                     value={username}
                                     onChange={(e) => setUsername(e.target.value)}
                                     className="bg-background border-input text-foreground"
@@ -129,11 +129,11 @@ export default function SignupPage() {
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="email" className="text-foreground">Email (opsional)</Label>
+                                <Label htmlFor="email" className="text-foreground">Email (optional)</Label>
                                 <Input
                                     id="email"
                                     type="email"
-                                    placeholder="Masukkan email..."
+                                    placeholder="Enter email..."
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
                                     className="bg-background border-input text-foreground"
@@ -144,7 +144,7 @@ export default function SignupPage() {
                                 <Input
                                     id="password"
                                     type="password"
-                                    placeholder="Minimal 6 karakter..."
+                                    placeholder="At least 6 characters..."
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     className="bg-background border-input text-foreground"
@@ -152,11 +152,11 @@ export default function SignupPage() {
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="confirmPassword" className="text-foreground">Konfirmasi Password *</Label>
+                                <Label htmlFor="confirmPassword" className="text-foreground">Confirm Password *</Label>
                                 <Input
                                     id="confirmPassword"
                                     type="password"
-                                    placeholder="Ulangi password..."
+                                    placeholder="Repeat password..."
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                     className="bg-background border-input text-foreground"
@@ -179,14 +179,14 @@ export default function SignupPage() {
                                 className="w-full"
                                 disabled={isLoading || !username || !password || !confirmPassword}
                             >
-                                {isLoading ? <><Spinner />Mendaftar...</> : 'Daftar'}
+                                {isLoading ? <><Spinner />Signing up...</> : 'Sign Up'}
                             </Button>
                         </form>
 
                         <div className="mt-4 text-center text-sm text-muted-foreground">
-                            Sudah punya akun?{' '}
+                            Already have an account?{' '}
                             <a href="/login" className="text-primary hover:underline">
-                                Login di sini
+                                Login here
                             </a>
                         </div>
                     </CardContent>
