@@ -1,14 +1,24 @@
 services:
-  qip-app:
-    container_name: qip-app
+  qip-frontend:
+    container_name: qip-frontend
     image: ghcr.io/prb-naoby/rpj-qip-chat:latest
-    ports:
-      - "3004:3000"   # Frontend
-      - "1234:1234"   # Backend API
-    volumes:
-      - data:/app/data
-    restart: unless-stopped
     environment:
+      - MODE=frontend
+      - BACKEND_URL=http://qip-backend:1234
+      - TZ=Asia/Jakarta
+    ports:
+      - "3004:3000"
+    networks:
+      - nginx-network
+    depends_on:
+      - qip-backend
+    restart: unless-stopped
+
+  qip-backend:
+    container_name: qip-backend
+    image: ghcr.io/prb-naoby/rpj-qip-chat:latest
+    environment:
+      - MODE=backend
       - DEBUG_MODE=${DEBUG_MODE:-false}
       - MS_CLIENT_ID=${MS_CLIENT_ID}
       - MS_CLIENT_SECRET=${MS_CLIENT_SECRET}
@@ -22,6 +32,10 @@ services:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+    ports:
+      - "1234:1234"
+    volumes:
+      - data:/app/data
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:1234/health" ]
       interval: 30s
@@ -30,6 +44,7 @@ services:
     networks:
       - nginx-network
       - redis
+    restart: unless-stopped
 
 networks:
   nginx-network:

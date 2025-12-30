@@ -1,76 +1,70 @@
-FROM python:3.11-slim AS backend-base
+# =============================================================================
+# QIP Chat - Single Image (Multi-Mode)
+# =============================================================================
+# One image that can run as either frontend or backend
+# Usage:
+#   - Frontend: docker run -e MODE=frontend -p 3000:3000 ghcr.io/prb-naoby/rpj-qip-chat
+#   - Backend:  docker run -e MODE=backend -p 1234:1234 ghcr.io/prb-naoby/rpj-qip-chat
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1: Build Frontend
+# -----------------------------------------------------------------------------
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+
+COPY frontend/ .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 2: Combined Runtime
+# -----------------------------------------------------------------------------
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies including Node.js
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
-    supervisor \
+    bash \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first to leverage cache
+# Copy and install Python dependencies
 COPY requirements.txt .
-
-# Install python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend application code
 COPY api/ ./api/
 COPY app/ ./app/
 
-# =============================================================================
-# Frontend Build Stage
-# =============================================================================
-FROM node:20-alpine AS frontend-builder
-WORKDIR /frontend
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
-COPY frontend/ .
-ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
-
-# =============================================================================
-# Final Combined Image
-# =============================================================================
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies including Node.js and supervisor
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    supervisor \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy Python dependencies from backend-base
-COPY --from=backend-base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=backend-base /usr/local/bin /usr/local/bin
-
-# Copy backend application
-COPY api/ ./api/
-COPY app/ ./app/
-
-# Copy frontend standalone build
+# Copy built frontend from builder stage
 COPY --from=frontend-builder /frontend/.next/standalone ./frontend/
 COPY --from=frontend-builder /frontend/.next/static ./frontend/.next/static
 COPY --from=frontend-builder /frontend/public ./frontend/public
 
 # Create data directory
-RUN mkdir -p /app/data /var/log/supervisor
+RUN mkdir -p /app/data
 
-# Copy supervisor configuration
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# Copy and setup entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
-# Expose ports
+# Default to backend mode
+ENV MODE=backend
+
+# Expose both ports (only one will be used depending on mode)
 EXPOSE 1234 3000
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD curl --fail http://localhost:1234/health && curl --fail http://localhost:3000 || exit 1
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:1234/health || curl -f http://localhost:3000/ || exit 1
 
-# Run supervisor
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+ENTRYPOINT ["/app/entrypoint.sh"]
