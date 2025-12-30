@@ -78,7 +78,7 @@ export default function ManageTab() {
 
     const handleJobClick = (job: any) => {
         // Accept both 'analyze' and 'analyze_transform' job types
-        const isAnalyzeJob = job.job_type === 'analyze' || job.job_type === 'analyze_transform';
+        const isAnalyzeJob = job.job_type === 'analysis';
         if (job.status === 'completed' && isAnalyzeJob && job.result) {
             setAnalysisTarget({
                 tableId: job.metadata?.previewTableId || '', // Fallback if missing

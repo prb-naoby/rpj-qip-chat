@@ -151,7 +151,6 @@ export default function OneDriveTab() {
     const [isValidating, setIsValidating] = useState(false);
     const [appendTransformPreview, setAppendTransformPreview] = useState<AppendTransformPreview | null>(null);
     const [isPreviewingTransform, setIsPreviewingTransform] = useState(false);
-    const [transformFeedback, setTransformFeedback] = useState('');
     const [isConfirmingTransform, setIsConfirmingTransform] = useState(false);
     const [mappingDescription, setMappingDescription] = useState('');
     const [isGeneratingTransform, setIsGeneratingTransform] = useState(false);
@@ -168,10 +167,109 @@ export default function OneDriveTab() {
         dispatch(fetchTables());
     }, [dispatch]);
 
+    // Auto-trigger validation when target table is selected
     useEffect(() => {
-        // Reset validation when target table changes
-        resetAppendState();
+        if (targetTableId && previewTableId && saveMode === 'append') {
+            handleAutoValidate();
+        }
     }, [targetTableId]);
+
+    // Auto-validate when target table changes
+    const handleAutoValidate = async () => {
+        if (!previewTableId || !targetTableId) return;
+
+        // Reset previous state
+        setAppendValidation(null);
+        setAppendTransformPreview(null);
+        setMappingDescription('');
+        setAppendError(null);
+        setGeneratedTransformCode(null);
+        setIsValidating(true);
+
+        try {
+            const response = await api.validateAppend(previewTableId, targetTableId);
+            setAppendValidation(response.data);
+
+            if (response.data.columns_match) {
+                toast.success('✅ Columns match! Ready to append.');
+            } else {
+                toast.info('Column mismatch detected - click Apply Transform to continue');
+            }
+        } catch (error: any) {
+            setAppendError(error.response?.data?.detail || error.message);
+            toast.error('Validation failed');
+        } finally {
+            setIsValidating(false);
+        }
+    };
+
+    // Apply transform (with optional description)
+    const handleApplyTransform = async () => {
+        if (!previewTableId || !targetTableId) return;
+
+        setAppendTransformPreview(null);
+        
+        if (appendValidation?.target_has_transform && !mappingDescription.trim()) {
+            // Use stored transform
+            setIsPreviewingTransform(true);
+            toast.info('⏳ Applying stored transform...', { duration: 2000 });
+
+            try {
+                const jobResponse = await api.previewAppendTransform(previewTableId, targetTableId);
+                const jobId = jobResponse.data.job_id;
+                const result = await pollJobUntilComplete(jobId);
+                setAppendTransformPreview(result);
+
+                if (result.success) {
+                    toast.success('✨ Transform preview ready!');
+                } else {
+                    toast.error(result.error || 'Transform failed');
+                }
+            } catch (error: any) {
+                setAppendTransformPreview({
+                    success: false,
+                    preview_data: [],
+                    preview_columns: [],
+                    error: error.message || 'Preview failed'
+                });
+            } finally {
+                setIsPreviewingTransform(false);
+            }
+        } else {
+            // Generate new transform (with or without description)
+            setIsGeneratingTransform(true);
+            toast.info('🤖 AI is generating transform...', { duration: 3000 });
+
+            try {
+                const jobResponse = await api.generateAppendTransform(
+                    previewTableId,
+                    targetTableId,
+                    mappingDescription || ''
+                );
+                const jobId = jobResponse.data.job_id;
+                const result = await pollJobUntilComplete(jobId);
+                setAppendTransformPreview(result);
+
+                if (result.success) {
+                    if (result.generated_code) {
+                        setGeneratedTransformCode(result.generated_code);
+                    }
+                    toast.success('✨ Transform generated!');
+                } else {
+                    toast.error(result.error || 'Transform failed');
+                }
+            } catch (error: any) {
+                setAppendTransformPreview({
+                    success: false,
+                    preview_data: [],
+                    preview_columns: [],
+                    error: error.message || 'Failed'
+                });
+            } finally {
+                setIsGeneratingTransform(false);
+            }
+        }
+    };
 
     const checkStatus = async () => {
         try {
@@ -488,115 +586,7 @@ export default function OneDriveTab() {
         setAppendError(null);
     };
 
-    // Generate NEW transform to match target schema (when no stored transform exists)
-    const handleGenerateTransform = async () => {
-        if (!previewTableId || !targetTableId) return;
-
-        setIsGeneratingTransform(true);
-        setAppendTransformPreview(null);
-
-        try {
-            // Submit job and get job_id
-            const jobResponse = await api.generateAppendTransform(
-                previewTableId,
-                targetTableId,
-                mappingDescription || ''
-            );
-            const jobId = jobResponse.data.job_id;
-            toast.info('🤖 AI is generating transform code...', { duration: 3000 });
-
-            // Poll until complete
-            const result = await pollJobUntilComplete(jobId);
-            setAppendTransformPreview(result);
-
-            if (result.success) {
-                if (result.generated_code) {
-                    setGeneratedTransformCode(result.generated_code);
-                }
-                toast.success('✨ Transform generated successfully!');
-            } else {
-                toast.error(result.error || 'Transform generation failed - try adding more description');
-            }
-        } catch (error: any) {
-            setAppendTransformPreview({
-                success: false,
-                preview_data: [],
-                preview_columns: [],
-                error: error.message || 'Failed to generate transform'
-            });
-            toast.error('Failed to generate transform');
-        } finally {
-            setIsGeneratingTransform(false);
-        }
-    };
-
-    // Step 1: Validate append compatibility when target table changes
-    const handleValidateAppend = async () => {
-        if (!previewTableId || !targetTableId) return;
-
-        setIsValidating(true);
-        resetAppendState();
-
-        try {
-            const response = await api.validateAppend(previewTableId, targetTableId);
-            setAppendValidation(response.data);
-
-            if (response.data.columns_match) {
-                toast.success('✅ Columns match! Ready to append.');
-            } else if (response.data.compatible && response.data.target_has_transform) {
-                toast.info('Transform available - click "Preview Transform" to continue');
-            } else {
-                toast.warning('Columns do not match and no compatible transform found');
-            }
-        } catch (error: any) {
-            setAppendError(error.response?.data?.detail || error.message);
-            toast.error('Validation failed');
-        } finally {
-            setIsValidating(false);
-        }
-    };
-
-    // Step 2: Preview the transform applied to source data
-    const handlePreviewTransform = async (feedback?: string) => {
-        if (!previewTableId || !targetTableId) return;
-
-        setIsPreviewingTransform(true);
-        setAppendTransformPreview(null);
-
-        try {
-            // Submit job and get job_id
-            const jobResponse = await api.previewAppendTransform(
-                previewTableId,
-                targetTableId,
-                feedback || transformFeedback || undefined
-            );
-            const jobId = jobResponse.data.job_id;
-            toast.info('⏳ Applying transform...', { duration: 2000 });
-
-            // Poll until complete
-            const result = await pollJobUntilComplete(jobId);
-            setAppendTransformPreview(result);
-
-            if (result.success) {
-                toast.success('✨ Transform preview ready!');
-                setTransformFeedback('');
-            } else {
-                toast.error(result.error || 'Transform failed - provide feedback to fix');
-            }
-        } catch (error: any) {
-            setAppendTransformPreview({
-                success: false,
-                preview_data: [],
-                preview_columns: [],
-                error: error.message || 'Preview failed'
-            });
-            toast.error('Preview failed');
-        } finally {
-            setIsPreviewingTransform(false);
-        }
-    };
-
-    // Step 3: Confirm and append the transformed data
+    // Confirm and append the transformed data
     const handleConfirmTransformAppend = async () => {
         if (!previewTableId || !targetTableId) return;
 
@@ -922,138 +912,99 @@ export default function OneDriveTab() {
                                         {/* Step 1: Table Selector */}
                                         <div className="space-y-2">
                                             <Label>Target Table:</Label>
-                                            <div className="flex gap-2">
-                                                <Select
-                                                    value={targetTableId}
-                                                    onValueChange={(value) => {
-                                                        dispatch(setTargetTableId(value));
-                                                        resetAppendState();
-                                                    }}
-                                                >
-                                                    <SelectTrigger className="flex-1">
-                                                        <SelectValue placeholder="Select a table to append to..." />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        {tables.map((table) => (
-                                                            <SelectItem key={table.cache_path} value={table.cache_path}>
-                                                                {table.display_name} ({table.n_rows} rows)
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                                <Button
-                                                    onClick={handleValidateAppend}
-                                                    disabled={!targetTableId || isValidating}
-                                                    variant="outline"
-                                                    className="gap-2"
-                                                >
-                                                    {isValidating ? <Spinner /> : <RefreshCw className="w-4 h-4" />}
-                                                    Check
-                                                </Button>
-                                            </div>
+                                            <Select
+                                                value={targetTableId}
+                                                onValueChange={(value) => {
+                                                    dispatch(setTargetTableId(value));
+                                                }}
+                                            >
+                                                <SelectTrigger className="w-full">
+                                                    <SelectValue placeholder="Select a table to append to..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {tables.map((table) => (
+                                                        <SelectItem key={table.cache_path} value={table.cache_path}>
+                                                            {table.display_name} ({table.n_rows} rows)
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
                                         </div>
 
-                                        {/* Validation Results */}
-                                        {appendValidation && (
+                                        {/* Loading State - Validating */}
+                                        {isValidating && (
+                                            <Alert className="border-blue-500/50 bg-blue-500/10">
+                                                <Spinner className="h-4 w-4" />
+                                                <AlertTitle className="text-blue-600">Checking compatibility...</AlertTitle>
+                                            </Alert>
+                                        )}
+
+                                        {/* Results - Columns Match */}
+                                        {appendValidation && appendValidation.columns_match && !isValidating && (
+                                            <Alert className="border-green-500/50 bg-green-500/10">
+                                                <CheckCircle className="h-4 w-4 text-green-500" />
+                                                <AlertTitle className="text-green-600">Ready to Append</AlertTitle>
+                                                <AlertDescription className="text-sm">
+                                                    Columns match! You can directly append or apply transform first.
+                                                </AlertDescription>
+                                            </Alert>
+                                        )}
+
+                                        {/* Transform Section - Show for both match and mismatch */}
+                                        {appendValidation && !isValidating && !appendTransformPreview && (
                                             <div className="space-y-3">
-                                                {/* Columns Match - Ready to Append */}
-                                                {appendValidation.columns_match && (
-                                                    <Alert className="border-green-500/50 bg-green-500/10">
-                                                        <CheckCircle className="h-4 w-4 text-green-500" />
-                                                        <AlertTitle className="text-green-600">Ready to Append</AlertTitle>
-                                                        <AlertDescription className="text-sm">
-                                                            Columns match! You can directly append this data.
+                                                {/* Column Mismatch Alert */}
+                                                {!appendValidation.columns_match && (
+                                                    <Alert variant="destructive">
+                                                        <AlertTriangle className="h-4 w-4" />
+                                                        <AlertTitle>Column Mismatch</AlertTitle>
+                                                        <AlertDescription className="text-sm space-y-1">
+                                                            {appendValidation.issues.slice(0, 3).map((issue, i) => (
+                                                                <div key={i}>• {issue}</div>
+                                                            ))}
+                                                            {appendValidation.issues.length > 3 && (
+                                                                <div className="text-muted-foreground">...and {appendValidation.issues.length - 3} more</div>
+                                                            )}
                                                         </AlertDescription>
                                                     </Alert>
                                                 )}
 
-                                                {/* Columns Don't Match - Show Issues */}
-                                                {!appendValidation.columns_match && (
-                                                    <>
-                                                        <Alert variant="destructive" className="mt-2">
-                                                            <AlertTriangle className="h-4 w-4" />
-                                                            <AlertTitle>Column Mismatch</AlertTitle>
-                                                            <AlertDescription className="text-sm space-y-1">
-                                                                {appendValidation.issues.map((issue, i) => (
-                                                                    <div key={i}>• {issue}</div>
-                                                                ))}
+                                                {/* Transform Info */}
+                                                {appendValidation.target_has_transform && (
+                                                    <Alert className="border-blue-500/50 bg-blue-500/10">
+                                                        <Wand2 className="h-4 w-4 text-blue-500" />
+                                                        <AlertTitle className="text-blue-600">Stored Transform Available</AlertTitle>
+                                                        {appendValidation.transform_explanation && (
+                                                            <AlertDescription className="text-sm">
+                                                                {appendValidation.transform_explanation}
                                                             </AlertDescription>
-                                                        </Alert>
-
-                                                        {/* LLM Compatibility Assessment */}
-                                                        {appendValidation.similarity_reason && (
-                                                            <Alert className={appendValidation.compatible ? "border-blue-500/50 bg-blue-500/10" : "border-amber-500/50 bg-amber-500/10"}>
-                                                                {appendValidation.compatible ? (
-                                                                    <Wand2 className="h-4 w-4 text-blue-500" />
-                                                                ) : (
-                                                                    <AlertTriangle className="h-4 w-4 text-amber-500" />
-                                                                )}
-                                                                <AlertTitle className={appendValidation.compatible ? "text-blue-600" : "text-amber-600"}>
-                                                                    {appendValidation.compatible ? "Transform Available" : "Transform May Not Work"}
-                                                                </AlertTitle>
-                                                                <AlertDescription className="text-sm">
-                                                                    {appendValidation.similarity_reason}
-                                                                </AlertDescription>
-                                                            </Alert>
                                                         )}
-
-                                                        {/* Transform Explanation */}
-                                                        {/* Option 1: Stored Transform (if available) */}
-                                                        {appendValidation.target_has_transform && (
-                                                            <div className="rounded-md border p-3 bg-muted/40 space-y-3">
-                                                                <div className="flex items-center justify-between">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <Badge variant="secondary" className="text-xs">Stored Transform</Badge>
-                                                                        {appendValidation.compatible && (
-                                                                            <span className="text-xs text-green-600 flex items-center gap-1">
-                                                                                <CheckCircle className="w-3 h-3" /> Compatible
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-
-                                                                {appendValidation.transform_explanation && (
-                                                                    <p className="text-xs text-muted-foreground">
-                                                                        {appendValidation.transform_explanation}
-                                                                    </p>
-                                                                )}
-
-                                                                <Button
-                                                                    onClick={() => handlePreviewTransform()}
-                                                                    disabled={isPreviewingTransform}
-                                                                    className="w-full gap-2"
-                                                                    variant="outline"
-                                                                >
-                                                                    {isPreviewingTransform ? <Spinner /> : <RefreshCw className="w-4 h-4" />}
-                                                                    Apply Stored Transform
-                                                                </Button>
-                                                            </div>
-                                                        )}
-
-                                                        {/* Option 2: Generate New Transform */}
-                                                        <div className={`space-y-2 ${appendValidation.target_has_transform ? "pt-2 border-t border-dashed" : ""}`}>
-                                                            <Label className="text-sm font-medium flex items-center justify-between">
-                                                                <span>{appendValidation.target_has_transform ? "Or Generate New Transform" : "Generate Transform"}</span>
-                                                                <Badge variant="outline" className="text-[10px] font-normal">AI Powered</Badge>
-                                                            </Label>
-                                                            <Textarea
-                                                                placeholder="e.g. Map 'CustName' to 'Customer', 'InvDate' to 'Date'..."
-                                                                value={mappingDescription}
-                                                                onChange={(e) => setMappingDescription(e.target.value)}
-                                                                className="text-xs min-h-[60px] resize-none"
-                                                            />
-                                                            <Button
-                                                                onClick={handleGenerateTransform}
-                                                                disabled={isGeneratingTransform}
-                                                                className="w-full gap-2"
-                                                                variant={appendValidation.target_has_transform ? "secondary" : "default"}
-                                                            >
-                                                                {isGeneratingTransform ? <Spinner /> : <Wand2 className="w-4 h-4" />}
-                                                                Generate & Preview
-                                                            </Button>
-                                                        </div>
-                                                    </>
+                                                    </Alert>
                                                 )}
+
+                                                {/* Optional Description + Apply Button */}
+                                                <div className="space-y-2">
+                                                    <Label className="text-sm">Custom mapping instructions (optional):</Label>
+                                                    <Textarea
+                                                        placeholder="e.g., Map 'CustName' to 'Customer', skip first 2 rows..."
+                                                        value={mappingDescription}
+                                                        onChange={(e) => setMappingDescription(e.target.value)}
+                                                        rows={2}
+                                                        className="text-sm resize-none"
+                                                    />
+                                                    <Button
+                                                        onClick={handleApplyTransform}
+                                                        disabled={isPreviewingTransform || isGeneratingTransform}
+                                                        className="w-full gap-2"
+                                                        variant={appendValidation.columns_match ? "outline" : "default"}
+                                                    >
+                                                        {(isPreviewingTransform || isGeneratingTransform) ? (
+                                                            <><Spinner />Processing...</>
+                                                        ) : (
+                                                            <><Wand2 className="w-4 h-4" />Apply Transform</>
+                                                        )}
+                                                    </Button>
+                                                </div>
                                             </div>
                                         )}
 
@@ -1121,23 +1072,23 @@ export default function OneDriveTab() {
                                                             </AlertDescription>
                                                         </Alert>
 
-                                                        {/* Feedback Input for Retry */}
+                                                        {/* Retry with description */}
                                                         <div className="space-y-2">
-                                                            <Label>Describe how to fix the transform:</Label>
+                                                            <Label>Provide instructions to fix the transform:</Label>
                                                             <Textarea
-                                                                placeholder="e.g., 'Skip the first 2 rows', 'Use different date format', etc."
-                                                                value={transformFeedback}
-                                                                onChange={(e) => setTransformFeedback(e.target.value)}
+                                                                placeholder="e.g., Map 'CustName' to 'Customer', skip first 2 rows..."
+                                                                value={mappingDescription}
+                                                                onChange={(e) => setMappingDescription(e.target.value)}
                                                                 rows={2}
-                                                                className="resize-none"
+                                                                className="text-sm resize-none"
                                                             />
                                                             <Button
-                                                                onClick={() => handlePreviewTransform(transformFeedback)}
-                                                                disabled={!transformFeedback.trim() || isPreviewingTransform}
+                                                                onClick={handleApplyTransform}
+                                                                disabled={isGeneratingTransform || isPreviewingTransform}
                                                                 className="gap-2"
                                                             >
-                                                                {isPreviewingTransform ? (
-                                                                    <><Spinner />Retrying...</>
+                                                                {(isGeneratingTransform || isPreviewingTransform) ? (
+                                                                    <><Spinner />Processing...</>
                                                                 ) : (
                                                                     <><RefreshCw className="w-4 h-4" />Retry Transform</>
                                                                 )}

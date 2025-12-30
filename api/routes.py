@@ -1422,7 +1422,7 @@ async def append_to_table(
     job_id = job_manager.submit_job(
         _do_append,
         current_user["id"],
-        "append",
+        "transform",
         request.source_table_id,
         request.target_table_id,
         request.description
@@ -1662,15 +1662,24 @@ async def preview_append_transform(
                 "error": f"Preview transform failed: {str(e)}"
             }
     
-    # Get display names for metadata
-    source_name = Path(request.source_table_id).stem if request.source_table_id else "Unknown"
-    target_name = Path(request.target_table_id).stem if request.target_table_id else "Unknown"
+    # Get display names from catalog for better job titles
+    from app.datasets import list_all_cached_data
+    cached_tables = list_all_cached_data()
+    
+    source_name = "Unknown"
+    target_name = "Unknown"
+    
+    for table in cached_tables:
+        if str(table.cache_path) == request.source_table_id:
+            source_name = table.display_name
+        if str(table.cache_path) == request.target_table_id:
+            target_name = table.display_name
     
     # Submit to job manager with metadata
     job_id = job_manager.submit_job(
         _do_preview_transform,
         current_user["id"],
-        "preview_transform",
+        "analysis",
         request.source_table_id,
         request.target_table_id,
         request.user_feedback,
@@ -1741,7 +1750,7 @@ async def confirm_append_transform(
     job_id = job_manager.submit_job(
         _do_confirm_append,
         current_user["id"],
-        "append",
+        "transform",
         request.source_table_id,
         request.target_table_id,
         request.description,
@@ -1905,15 +1914,24 @@ Generate the Python code:"""
                 "error": f"Transform generation failed: {str(e)}"
             }
     
-    # Get display names for metadata
-    source_name = Path(request.source_table_id).stem if request.source_table_id else "Unknown"
-    target_name = Path(request.target_table_id).stem if request.target_table_id else "Unknown"
+    # Get display names from catalog for better job titles
+    from app.datasets import list_all_cached_data
+    cached_tables = list_all_cached_data()
+    
+    source_name = "Unknown"
+    target_name = "Unknown"
+    
+    for table in cached_tables:
+        if str(table.cache_path) == request.source_table_id:
+            source_name = table.display_name
+        if str(table.cache_path) == request.target_table_id:
+            target_name = table.display_name
     
     # Submit to job manager with metadata
     job_id = job_manager.submit_job(
         _do_generate_transform,
         current_user["id"],
-        "generate_transform",
+        "analysis",
         request.source_table_id,
         request.target_table_id,
         request.user_description,
@@ -2008,13 +2026,21 @@ async def analyze_file(
     # Build metadata for recovery
     job_metadata = request.metadata or {}
     if "displayName" not in job_metadata:
-        job_metadata["displayName"] = Path(request.table_id).stem
+        # Get display name from catalog instead of using parquet filename
+        from app.datasets import list_all_cached_data
+        cached_tables = list_all_cached_data()
+        display_name = None
+        for table in cached_tables:
+            if str(table.cache_path) == request.table_id:
+                display_name = table.display_name
+                break
+        job_metadata["displayName"] = display_name or Path(request.table_id).stem
     job_metadata["previewTableId"] = request.table_id
 
     job_id = job_manager.submit_job(
         _do_analyze,
         current_user["id"],
-        "analyze",
+        "analysis",
         request.table_id,
         request.user_description,
         metadata=job_metadata
@@ -2075,14 +2101,21 @@ async def preview_transform(
                 "error": f"Transform preview failed: {str(e)}"
             }
     
-    # Get display name for metadata
-    table_name = Path(request.table_id).stem if request.table_id else "Unknown"
+    # Get display name from catalog instead of using parquet filename
+    from app.datasets import list_all_cached_data
+    cached_tables = list_all_cached_data()
+    table_name = None
+    for table in cached_tables:
+        if str(table.cache_path) == request.table_id:
+            table_name = table.display_name
+            break
+    table_name = table_name or Path(request.table_id).stem
     
     # Submit to job manager with metadata
     job_id = job_manager.submit_job(
         _do_transform_preview,
         current_user["id"],
-        "transform_preview",
+        "analysis",
         request.table_id,
         request.transform_code,
         metadata={
@@ -2217,7 +2250,7 @@ async def refine_transform(
     job_id = job_manager.submit_job(
         _do_refine_transform,
         current_user["id"],
-        "refine",
+        "analysis",
         request.table_id,
         request.transform_code,
         request.feedback,

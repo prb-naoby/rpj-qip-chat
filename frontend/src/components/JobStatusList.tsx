@@ -144,17 +144,11 @@ export function JobStatusList({
 
     // User-friendly job type labels
     const JOB_TYPE_LABELS: Record<string, string> = {
+        'analysis': 'Data Analysis',
+        'transform': 'Transformation',
         'onedrive_upload': 'Upload to OneDrive',
-        'append': 'Append Data',
-        'preview_transform': 'Preview Transform',
-        'generate_transform': 'AI Transform Generation',
-        'analyze': 'Data Analysis',
-        'transform_preview': 'Transform Preview',
-        'transform': 'Apply Transform',
-        'refine': 'Refine Transform',
         'ingest': 'Document Ingestion',
         'ingest_dry_run': 'Ingestion Test',
-        'load_sheet': 'Load Sheet',
     };
 
     const getDisplayName = (job: JobState) => {
@@ -180,12 +174,12 @@ export function JobStatusList({
                         All ({jobs.length})
                     </Button>
                     <Button
-                        variant={selectedFilter === 'analyze' ? 'default' : 'ghost'}
+                        variant={selectedFilter === 'analysis' ? 'default' : 'ghost'}
                         size="sm"
-                        onClick={() => setSelectedFilter('analyze')}
+                        onClick={() => setSelectedFilter('analysis')}
                         className="h-6 px-2 text-[10px]"
                     >
-                        Analyze ({jobs.filter(j => j.job_type === 'analyze').length})
+                        Analysis ({jobs.filter(j => j.job_type === 'analysis').length})
                     </Button>
                     <Button
                         variant={selectedFilter === 'transform' ? 'default' : 'ghost'}
