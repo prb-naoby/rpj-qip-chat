@@ -700,8 +700,8 @@ class TestTablePreviewEndpoint:
             headers={"Authorization": f"Bearer {user_token}"}
         )
         
-        # May return 404 or 500 depending on implementation
-        assert response.status_code in [404, 500]
+        # May return 400 (invalid path), 404 (not found), or 500 (internal error)
+        assert response.status_code in [400, 404, 500]
 
 
 class TestTableDescriptionEndpoint:

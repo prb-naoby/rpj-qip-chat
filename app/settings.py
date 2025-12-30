@@ -18,6 +18,35 @@ CATALOG_DB = BASE_DIR / "data" / "catalog.db"
 DEFAULT_LLM_MODEL = os.getenv("PANDASAI_LLM_MODEL", "gpt-5-mini")
 UPLOAD_MAX_MB = int(os.getenv("UPLOAD_MAX_MB", 25))
 
+
+def safe_resolve_path(user_path: str, base_dir: Path = None) -> Path:
+    """
+    Safely resolve a user-provided path, preventing path traversal attacks.
+    
+    Args:
+        user_path: User-provided path string (e.g., table_id)
+        base_dir: Base directory to validate against (defaults to UPLOAD_DIR)
+    
+    Returns:
+        Resolved Path object if safe
+        
+    Raises:
+        ValueError: If path traversal detected
+    """
+    if base_dir is None:
+        base_dir = UPLOAD_DIR
+    
+    # Resolve both paths to absolute
+    base_resolved = base_dir.resolve()
+    user_resolved = Path(user_path).resolve()
+    
+    # Check if user path is within base directory
+    try:
+        user_resolved.relative_to(base_resolved)
+        return user_resolved
+    except ValueError:
+        raise ValueError(f"Path traversal detected: {user_path}")
+
 class AppSettings:
     """Simple settings accessor to keep imports tidy."""
 
@@ -34,10 +63,10 @@ class AppSettings:
     # Document Retrieval Settings (Qdrant + Gemini)
     qdrant_url: str = os.getenv("QDRANT_URL", "")
     qdrant_api_key: str = os.getenv("QDRANT_API_KEY", "")
-    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     embed_model: str = os.getenv("EMBED_MODEL", "gemini-embedding-001")
     gemini_llm_model: str = os.getenv("GEMINI_LLM_MODEL", "gemini-2.0-flash-lite")
     embed_dim: int = int(os.getenv("EMBED_DIM", "3072"))
+    
     
     # Document Ingestion Settings
     document_root_path: str = os.getenv("DOCUMENT_ROOT_PATH", "")

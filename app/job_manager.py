@@ -196,57 +196,40 @@ class JobManager:
 
     def get_user_jobs(self, user_id: int, job_type: Optional[str] = None, limit: int = 10) -> list:
         """
-        Get all jobs for a specific user.
-        WARNING: Redis keys scanning is inefficient.
-        Better approach: Maintain a set of job IDs per user.
+        Get all jobs (not filtered by user) for transparency.
+        All users can see all jobs, but only owners can edit/delete.
+        
+        Args:
+            user_id: Still accepted for API compatibility but not used for filtering
+            job_type: Optional filter by job type
+            limit: Maximum number of jobs to return
         """
-        # For MVP optimization, we'll scan recently accessed keys or use a user-index approach if strict.
-        # Since we didn't implement user-index set in submit_job yet (to save complexity),
-        # we will fetch ALL keys matching job:* and filter.
-        # THIS IS NOT PRODUCTION SCALE but fine for <1000 jobs.
-        
-        # Better: use keys pattern matching (still slow-ish but okay for now)
-        # Or better: Just implement the user index now. 
-        pass 
-        # Actually I need to implement user index to make this efficient.
-        # Let's fix submit_job to add to user index first (in next iteration or just rely on scan for now)
-        
-        # Fallback implementation scanning (simpler for immediate refactor)
-        # But wait, I can just upgrade submit_job right now.
-        
-        # Let's assume we implement user index in _save_job next time or now.
-        # I'll modify _save_job below in next edit or use scan.
-        
-        # Using SCAN for now:
+        # Fetch ALL jobs from Redis (not filtered by user)
         if not self.redis.is_connected:
-            self.logger.warning(f"Fetching jobs from MEMORY for user {user_id}")
+            self.logger.warning(f"Fetching jobs from MEMORY")
             all_jobs = list(getattr(self, '_memory_jobs', {}).values())
-            jobs = [j for j in all_jobs if j.get('user_id') == user_id]
         else:
             # Get all job keys
             keys = self.redis.client.keys("job:*")
-            self.logger.info(f"Scanning Redis jobs for user {user_id}. Found {len(keys)} total job keys.")
-            jobs = []
+            self.logger.info(f"Scanning Redis jobs. Found {len(keys)} total job keys.")
+            all_jobs = []
             for k in keys:
                 j = self.redis.get(k)
                 if j:
-                    # Log snippet for debug
-                    # self.logger.debug(f"Checking job {j.get('id')} owner: {j.get('user_id')}")
-                    if j.get('user_id') == user_id:
-                        jobs.append(j)
-            self.logger.info(f"Found {len(jobs)} jobs for user {user_id} in Redis.")
+                    all_jobs.append(j)
+            self.logger.info(f"Returning {len(all_jobs)} total jobs (unfiltered by user).")
                     
         if job_type:
-            jobs = [j for j in jobs if j.get('job_type') == job_type]
+            all_jobs = [j for j in all_jobs if j.get('job_type') == job_type]
             
         # Sort by submitted_at
-        jobs.sort(key=lambda x: x.get('submitted_at') or '', reverse=True)
+        all_jobs.sort(key=lambda x: x.get('submitted_at') or '', reverse=True)
         
         # Calculate queue stats for pending jobs in the result set
         if self.redis.is_connected:
             try:
                 pending_total = self.redis.client.zcard("jobs:pending")
-                for job in jobs:
+                for job in all_jobs:
                     if job.get('status') == JobStatus.PENDING.value:
                         rank = self.redis.client.zrank("jobs:pending", job['id'])
                         if rank is not None:
@@ -255,7 +238,7 @@ class JobManager:
             except Exception as e:
                 self.logger.error(f"Failed to enrich jobs with queue stats: {e}")
                 
-        return jobs[:limit]
+        return all_jobs[:limit]
 
     def _job_to_dict(self, job: Job) -> dict:
         """Helper to serialize job."""
@@ -333,6 +316,8 @@ class JobManager:
                 if to_delete:
                     self.logger.info(f"Cleaned up {len(to_delete)} old jobs")
 
-# Global instance
-job_manager = JobManager(max_workers=2)
+# Global instance with configurable workers
+import os
+_max_workers = int(os.getenv("JOB_MAX_WORKERS", 2))
+job_manager = JobManager(max_workers=_max_workers)
 

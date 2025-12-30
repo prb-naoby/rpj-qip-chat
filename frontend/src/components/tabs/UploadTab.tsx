@@ -390,10 +390,11 @@ export default function UploadTab() {
             <JobStatusList
                 jobs={jobs}
                 isLoading={isJobsLoading}
-                title="Active Jobs"
+                title="Jobs"
                 className="mb-4"
                 onJobsChange={refreshJobs}
-                onJobClick={handleJobClick}
+                compact={true}
+                defaultCollapsed={true}
             />
             {/* Upload Area */}
             <Card className="bg-card border-border">

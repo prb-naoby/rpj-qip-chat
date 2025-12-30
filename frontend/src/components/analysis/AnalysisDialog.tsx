@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import {
     Dialog,
@@ -13,7 +13,6 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from '@/components/ui/label';
@@ -27,11 +26,13 @@ import {
 } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Wand2, Play, Check, Save, X, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Wand2, Play, Save, AlertTriangle, ChevronDown, Code, Database, ArrowRight, Eye, Sparkles } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { cn } from "@/lib/utils";
 
 interface AnalysisDialogProps {
     tableId: string;
@@ -39,77 +40,90 @@ interface AnalysisDialogProps {
     isOpen: boolean;
     onClose: () => void;
     onSuccess: () => void;
+    initialJobResult?: AnalysisResult | null;
 }
 
-interface AnalysisResult {
+export interface AnalysisResult {
     summary: string;
     issues_found: string[];
     transform_code: string;
     needs_transform: boolean;
     validation_notes: string[];
     explanation: string;
-    preview_data: any[]; // Small preview from analysis
+    preview_data: any[];
     has_error: boolean;
 }
 
-export function AnalysisDialog({ tableId, tableName, isOpen, onClose, onSuccess }: AnalysisDialogProps) {
-    // States
-    const [step, setStep] = useState<'input' | 'analyzing' | 'review' | 'previewing' | 'saving'>('input');
+export function AnalysisDialog({ tableId, tableName, isOpen, onClose, onSuccess, initialJobResult }: AnalysisDialogProps) {
+    const [mode, setMode] = useState<'input' | 'review'>('input');
     const [description, setDescription] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
     const [result, setResult] = useState<AnalysisResult | null>(null);
     const [editedCode, setEditedCode] = useState('');
     const [feedback, setFeedback] = useState('');
     const [isRefining, setIsRefining] = useState(false);
+    const [step, setStep] = useState<'review' | 'previewing' | 'saving'>('review');
 
-    // History State
-    const [history, setHistory] = useState<AnalysisResult[]>([]);
-    const [historyIndex, setHistoryIndex] = useState(0);
-
-    // Preview Transform State
     const [previewData, setPreviewData] = useState<{ columns: string[], data: any[] } | null>(null);
+    const [rawData, setRawData] = useState<{ columns: string[], data: any[] } | null>(null);
+    const [rawDataError, setRawDataError] = useState<string | null>(null);
     const [previewError, setPreviewError] = useState<string | null>(null);
-
-    // Save Mode: 'replace' overwrites current table, 'new' creates a new table
     const [saveMode, setSaveMode] = useState<'replace' | 'new'>('replace');
 
-    const updateCurrentResult = (newResult: AnalysisResult) => {
-        setResult(newResult);
-        setEditedCode(newResult.transform_code || '');
-    };
+    const [isCodeExpanded, setIsCodeExpanded] = useState(false);
 
-    const handleHistoryNavigate = (direction: 'prev' | 'next') => {
-        const newIndex = direction === 'prev'
-            ? Math.max(0, historyIndex - 1)
-            : Math.min(history.length - 1, historyIndex + 1);
+    // Fetch raw data when opening in review mode
+    useEffect(() => {
+        if (isOpen && tableId) {
+            setRawDataError(null);
+            console.log('Fetching raw data for tableId:', tableId);
+            api.getTablePreview(tableId, 20)
+                .then(res => {
+                    console.log('Raw data response:', res.data);
+                    // Backend returns { columns, data, total_rows }
+                    if (res.data && res.data.data) {
+                        setRawData({ columns: res.data.columns, data: res.data.data });
+                    } else {
+                        setRawDataError('No preview data available');
+                    }
+                })
+                .catch(err => {
+                    console.error('Failed to fetch raw data:', err);
+                    setRawDataError(err.response?.data?.detail || err.message || 'Failed to load raw data');
+                });
+        }
+    }, [isOpen, tableId]);
 
-        setHistoryIndex(newIndex);
-        updateCurrentResult(history[newIndex]);
-        setPreviewData(null); // Clear preview when switching versions
-    };
-
-    const handleAnalyze = async () => {
-        setStep('analyzing');
-        setPreviewData(null);
-        setPreviewError(null);
-
-        try {
-            const res = await api.analyzeFile(tableId, description);
-            const data = res.data;
-
-            updateCurrentResult(data);
-            setHistory([data]);
-            setHistoryIndex(0);
-
-            if (data.has_error) {
-                toast.error("Analysis failed: " + data.explanation);
-                setStep('input');
+    useEffect(() => {
+        if (isOpen) {
+            if (initialJobResult) {
+                setMode('review');
+                setResult(initialJobResult);
+                setEditedCode(initialJobResult.transform_code || '');
+                if (initialJobResult.preview_data) {
+                    setPreviewData({
+                        columns: Object.keys(initialJobResult.preview_data[0] || {}),
+                        data: initialJobResult.preview_data
+                    });
+                }
             } else {
-                setStep('review');
+                setMode('input');
+                setDescription('');
             }
+        }
+    }, [isOpen, initialJobResult]);
+
+    const handleAnalyzeSubmit = async () => {
+        setIsSubmitting(true);
+        try {
+            await api.analyzeFile(tableId, description, { displayName: tableName });
+            toast.success("Analysis started in background");
+            onClose();
         } catch (error: any) {
-            console.error("Analysis error:", error);
-            toast.error("Failed to analyze file: " + (error.response?.data?.detail || error.message));
-            setStep('input');
+            toast.error("Failed to start analysis: " + (error.response?.data?.detail || error.message));
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -121,10 +135,7 @@ export function AnalysisDialog({ tableId, tableName, isOpen, onClose, onSuccess 
             if (res.data.error) {
                 setPreviewError(res.data.error);
             } else {
-                setPreviewData({
-                    columns: res.data.columns,
-                    data: res.data.preview_data
-                });
+                setPreviewData({ columns: res.data.columns, data: res.data.preview_data });
             }
         } catch (error: any) {
             setPreviewError(error.response?.data?.detail || error.message);
@@ -137,17 +148,9 @@ export function AnalysisDialog({ tableId, tableName, isOpen, onClose, onSuccess 
         if (!feedback.trim()) return;
         setIsRefining(true);
         try {
-            const res = await api.refineTransform(tableId, editedCode, feedback);
-            const data = res.data;
-
-            // Add to history
-            const newHistory = [...history.slice(0, historyIndex + 1), data];
-            setHistory(newHistory);
-            setHistoryIndex(newHistory.length - 1);
-
-            updateCurrentResult(data);
-            setFeedback(''); // Clear feedback
-            toast.success("Code refined by AI!");
+            await api.refineTransform(tableId, editedCode, feedback);
+            toast.success("Refinement job started");
+            onClose();
         } catch (error: any) {
             toast.error("Refinement failed: " + (error.response?.data?.detail || error.message));
         } finally {
@@ -159,12 +162,8 @@ export function AnalysisDialog({ tableId, tableName, isOpen, onClose, onSuccess 
         setStep('saving');
         try {
             const replaceOriginal = saveMode === 'replace';
-            await api.confirmTransform(tableId, editedCode, undefined, replaceOriginal);
-            toast.success(
-                replaceOriginal
-                    ? "Transformation applied and table updated!"
-                    : "Transformation applied and saved as new table!"
-            );
+            await api.confirmTransform(tableId, editedCode, tableName, replaceOriginal);
+            toast.success(replaceOriginal ? "Table updated!" : "Saved as new table!");
             onSuccess();
             onClose();
         } catch (error: any) {
@@ -173,302 +172,360 @@ export function AnalysisDialog({ tableId, tableName, isOpen, onClose, onSuccess 
         }
     };
 
-    // Reset state on close
     const handleOpenChange = (open: boolean) => {
-        if (!open) {
-            // Reset state
-            setTimeout(() => {
-                setStep('input');
-                setDescription('');
-                setResult(null);
-                setEditedCode('');
-                setPreviewData(null);
-                setHistory([]);
-                setSaveMode('replace');
-                setHistoryIndex(0);
-            }, 300);
-            onClose();
-        }
+        if (!open) onClose();
     };
+
+    // Data table renderer
+    const renderDataTable = (data: { columns: string[], data: any[] }, height: string = "h-[300px]") => (
+        <div className="rounded-md border bg-background overflow-hidden">
+            <ScrollArea className={cn(height, "w-full")}>
+                <div className="min-w-max">
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                {data.columns.map((col) => (
+                                    <TableHead key={col} className="bg-muted/50 px-3 py-2 whitespace-nowrap text-xs font-medium sticky top-0 z-10 border-r last:border-r-0">
+                                        {col}
+                                    </TableHead>
+                                ))}
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {data.data.map((row, i) => (
+                                <TableRow key={i} className="text-xs hover:bg-muted/20">
+                                    {data.columns.map((col) => {
+                                        const val = String(row[col] ?? "");
+                                        return (
+                                            <TableCell key={col} className="px-3 py-1.5 whitespace-nowrap border-r last:border-r-0 max-w-[200px]">
+                                                {val.length > 50 ? (
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <span className="truncate block">{val}</span>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent className="max-w-md">
+                                                            <p className="whitespace-pre-wrap text-xs">{val}</p>
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                ) : val}
+                                            </TableCell>
+                                        );
+                                    })}
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </div>
+                <ScrollBar orientation="horizontal" />
+                <ScrollBar orientation="vertical" />
+            </ScrollArea>
+        </div>
+    );
 
     return (
         <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-            <DialogContent className="max-w-[90vw] h-[90vh] flex flex-col p-0 gap-0">
-                <DialogHeader className="px-6 py-4 border-b flex flex-row items-center justify-between">
-                    <div className="space-y-1.5">
-                        <DialogTitle className="flex items-center gap-2">
-                            <Wand2 className="w-5 h-5 text-primary" />
-                            AI Data Analyst: {tableName}
-                        </DialogTitle>
-                        <DialogDescription>
-                            Analyze data quality and confirm transformations.
-                        </DialogDescription>
-                    </div>
-
-                    {(step === 'review' || step === 'previewing' || step === 'saving') && history.length > 1 && (
-                        <div className="flex items-center gap-2 bg-muted/50 p-1.5 rounded-md text-sm border">
-                            <span className="text-muted-foreground px-2">Version {historyIndex + 1} of {history.length}</span>
-                            <div className="flex gap-1">
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-6 w-6"
-                                            onClick={() => handleHistoryNavigate('prev')}
-                                            disabled={historyIndex === 0}
-                                        >
-                                            <span className="sr-only">Previous</span>
-                                            <ChevronLeft className="w-4 h-4" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        <p>Previous version</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-6 w-6"
-                                            onClick={() => handleHistoryNavigate('next')}
-                                            disabled={historyIndex === history.length - 1}
-                                        >
-                                            <span className="sr-only">Next</span>
-                                            <ChevronRight className="w-4 h-4" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        <p>Next version</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                            </div>
-                        </div>
-                    )}
+            <DialogContent className="max-w-[98vw] sm:max-w-[98vw] md:max-w-[98vw] lg:max-w-[98vw] xl:max-w-[98vw] w-[98vw] h-[95vh] flex flex-col p-0 gap-0">
+                {/* Header */}
+                <DialogHeader className="px-6 py-3 border-b shrink-0">
+                    <DialogTitle className="flex items-center gap-2 text-lg">
+                        <Wand2 className="w-5 h-5 text-primary" />
+                        AI Data Analyst: {tableName}
+                    </DialogTitle>
+                    <DialogDescription className="text-sm">
+                        {mode === 'input' ? "Start a new analysis to clean and transform your data." : "Review analysis results and confirm transformations."}
+                    </DialogDescription>
                 </DialogHeader>
 
-                <div className="flex-1 overflow-y-auto px-6 py-4">
-                    {step === 'input' && (
-                        <div className="space-y-4">
-                            <div className="bg-muted/50 p-4 rounded-lg">
-                                <h4 className="font-semibold mb-2">What happens next?</h4>
-                                <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
-                                    <li>AI will scan the <strong>cached parquet file</strong>.</li>
-                                    <li>It detects missing values, outliers, and type mismatches.</li>
-                                    <li>It proposes Python code to clean the data.</li>
-                                    <li>You can review, edit code, and preview changes before saving.</li>
-                                </ul>
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label className="text-sm font-medium">
-                                    Optional: Describe specific issues or cleaning rules
-                                </Label>
-                                <Textarea
-                                    placeholder="e.g. Remove rows where 'Status' is empty, Convert 'Date' to datetime..."
-                                    value={description}
-                                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDescription(e.target.value)}
-                                    rows={4}
-                                />
-                            </div>
-                        </div>
-                    )}
-
-                    {step === 'analyzing' && (
-                        <div className="flex flex-col items-center justify-center py-12 space-y-4">
-                            <Spinner className="size-12 text-primary" />
-                            <p className="text-muted-foreground animate-pulse">Analyzing data patterns...</p>
-                        </div>
-                    )}
-
-                    {(step === 'review' || step === 'previewing' || step === 'saving') && result && (
-                        <div className="space-y-6">
-                            {/* Summary Section */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <Alert variant={result.needs_transform ? "default" : "default"} className="bg-blue-50/10 border-blue-200/20">
-                                    <AlertTitle className="text-blue-500 font-semibold mb-2">Analysis Summary</AlertTitle>
-                                    <AlertDescription className="text-sm">
-                                        {result.summary}
-                                    </AlertDescription>
-                                </Alert>
-
-                                <div className="border rounded-md p-4 bg-muted/20">
-                                    <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                                        <AlertTriangle className="w-4 h-4 text-amber-500" />
-                                        Issues Detected
-                                    </h4>
-                                    {result.issues_found && result.issues_found.length > 0 ? (
-                                        <ul className="text-sm space-y-1">
-                                            {result.issues_found.map((issue, i) => (
-                                                <li key={i} className="flex items-start gap-2">
-                                                    <span className="text-muted-foreground">•</span>
-                                                    <span>{issue}</span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    ) : (
-                                        <p className="text-sm text-muted-foreground">No major issues found.</p>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Refine Section */}
-                            <div className="bg-blue-50/10 border border-blue-200/20 rounded-md p-4 space-y-2">
-                                <h4 className="text-sm font-semibold flex items-center gap-2">
-                                    <Wand2 className="w-4 h-4 text-blue-500" />
-                                    Refine with AI
-                                </h4>
-                                <div className="flex gap-2">
-                                    <Input
-                                        placeholder="Describe what to fix (e.g. 'Fix the date format', 'Remove empty rows')..."
-                                        value={feedback}
-                                        onChange={(e) => setFeedback(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleRefine()}
-                                    />
-                                    <Button onClick={handleRefine} disabled={isRefining || !feedback.trim()} size="sm">
-                                        {isRefining ? <Spinner /> : "Fix Code"}
-                                    </Button>
-                                </div>
-                            </div>
-
-                            {/* Code Section */}
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-sm font-medium">Transformation Logic (Python)</Label>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={handlePreviewTransform}
-                                        disabled={step === 'previewing'}
-                                    >
-                                        {step === 'previewing' ? (
-                                            <Spinner className="size-3" />
-                                        ) : (
-                                            <Play className="w-3 h-3 mr-2" />
-                                        )}
-                                        Run Preview
-                                    </Button>
-                                </div>
-                                <Textarea
-                                    className="font-mono text-xs bg-slate-950 text-slate-50 min-h-[150px]"
-                                    value={editedCode}
-                                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setEditedCode(e.target.value)}
-                                />
-                                <p className="text-xs text-muted-foreground">
-                                    The variable <code>df</code> is your dataframe. Modify it in place or return a new one.
-                                </p>
-                            </div>
-
-                            {/* Preview Section */}
-                            {previewError && (
-                                <Alert variant="destructive">
-                                    <AlertTitle>Preview Failed</AlertTitle>
-                                    <AlertDescription>{previewError}</AlertDescription>
-                                </Alert>
-                            )}
-
-                            {previewData && (
-                                <Card className="border-primary/20 bg-primary/5 mt-4">
-                                    <CardHeader className="py-4 px-6">
-                                        <div className="flex justify-between items-center">
-                                            <h3 className="text-sm font-medium leading-none tracking-tight flex items-center gap-2">
-                                                Preview Result
-                                            </h3>
-                                            <Badge variant="secondary" className="text-[10px] h-5 font-normal">
-                                                First 20 rows
-                                            </Badge>
-                                        </div>
+                {/* Body */}
+                <div className="flex-1 overflow-hidden">
+                    {mode === 'input' && (
+                        <div className="h-full grid grid-cols-2 gap-4 p-4 overflow-hidden">
+                            {/* Left Panel: Analysis Configuration */}
+                            <div className="flex flex-col gap-3">
+                                <Card className="shrink-0">
+                                    <CardHeader className="py-3">
+                                        <CardTitle className="text-base flex items-center gap-2">
+                                            <Sparkles className="w-4 h-4 text-primary" />
+                                            Analysis Configuration
+                                        </CardTitle>
                                     </CardHeader>
-                                    <CardContent className="p-6 pt-0">
-                                        <div className="rounded-md border bg-background">
-                                            <ScrollArea className="h-[300px] w-full rounded-md">
-                                                <div className="min-w-max p-1">
-                                                    <Table>
-                                                        <TableHeader>
-                                                            <TableRow>
-                                                                {previewData.columns.map((col) => (
-                                                                    <TableHead key={col} className="bg-muted/50 px-4 py-2 whitespace-nowrap text-muted-foreground font-medium sticky top-0 z-10">{col}</TableHead>
-                                                                ))}
-                                                            </TableRow>
-                                                        </TableHeader>
-                                                        <TableBody>
-                                                            {previewData.data.map((row, i) => (
-                                                                <TableRow key={i} className="border-t border-muted/50 text-xs">
-                                                                    {previewData.columns.map((col) => {
-                                                                        const cellValue = String(row[col] ?? "");
-                                                                        const isTruncated = cellValue.length > 60;
-                                                                        return (
-                                                                            <TableCell key={col} className="px-4 py-2 whitespace-nowrap border-r last:border-r-0">
-                                                                                {isTruncated ? (
-                                                                                    <Tooltip>
-                                                                                        <TooltipTrigger asChild>
-                                                                                            <span className="truncate block max-w-[200px]">{cellValue}</span>
-                                                                                        </TooltipTrigger>
-                                                                                        <TooltipContent className="max-w-md">
-                                                                                            <p className="whitespace-pre-wrap">{cellValue}</p>
-                                                                                        </TooltipContent>
-                                                                                    </Tooltip>
-                                                                                ) : (
-                                                                                    <span className="block">{cellValue}</span>
-                                                                                )}
-                                                                            </TableCell>
-                                                                        );
-                                                                    })}
-                                                                </TableRow>
-                                                            ))}
-                                                        </TableBody>
-                                                    </Table>
-                                                </div>
-                                                <ScrollBar orientation="horizontal" />
-                                                <ScrollBar orientation="vertical" />
-                                            </ScrollArea>
+                                    <CardContent className="space-y-4">
+                                        <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                                            <p className="text-sm text-blue-800 dark:text-blue-200 mb-2 font-medium">What happens next?</p>
+                                            <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1 list-disc list-inside">
+                                                <li>AI will scan the dataset for quality issues</li>
+                                                <li>Runs in the background - you can close this window</li>
+                                                <li>Results will appear in the Jobs list when ready</li>
+                                            </ul>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label>Optional: Describe specific issues or cleaning rules</Label>
+                                            <Textarea
+                                                placeholder="e.g. Remove rows where 'Status' is empty, Convert 'Date' to datetime..."
+                                                value={description}
+                                                onChange={(e) => setDescription(e.target.value)}
+                                                rows={8}
+                                                className="resize-none"
+                                            />
+                                            <Button
+                                                onClick={handleAnalyzeSubmit}
+                                                disabled={isSubmitting}
+                                                className="w-full gap-2"
+                                            >
+                                                {isSubmitting ? <Spinner className="w-4 h-4" /> : <Wand2 className="w-4 h-4" />}
+                                                Analyze
+                                            </Button>
                                         </div>
                                     </CardContent>
                                 </Card>
-                            )}
+                            </div>
+
+                            {/* Right Panel: Data Preview */}
+                            <div className="flex flex-col gap-3 overflow-hidden">
+                                <Card className="flex-1 flex flex-col overflow-hidden">
+                                    <CardHeader className="py-3 shrink-0">
+                                        <CardTitle className="text-base flex items-center gap-2">
+                                            <Database className="w-4 h-4 text-muted-foreground" />
+                                            Current Data
+                                        </CardTitle>
+                                        <p className="text-xs text-muted-foreground">Preview of your table (First 20 rows)</p>
+                                    </CardHeader>
+                                    <CardContent className="flex-1 overflow-hidden p-3">
+                                        {rawDataError ? (
+                                            <Alert variant="destructive">
+                                                <AlertTitle className="text-sm">Failed to Load</AlertTitle>
+                                                <AlertDescription className="text-xs">{rawDataError}</AlertDescription>
+                                            </Alert>
+                                        ) : rawData ? (
+                                            <div className="h-full rounded-md border bg-background overflow-hidden">
+                                                <ScrollArea className="h-full w-full">
+                                                    <div className="min-w-max">
+                                                        <Table>
+                                                            <TableHeader>
+                                                                <TableRow>
+                                                                    {rawData.columns.map((col) => (
+                                                                        <TableHead key={col} className="bg-muted/50 px-3 py-2 whitespace-nowrap font-medium sticky top-0 z-10 text-xs">
+                                                                            {col}
+                                                                        </TableHead>
+                                                                    ))}
+                                                                </TableRow>
+                                                            </TableHeader>
+                                                            <TableBody>
+                                                                {rawData.data.map((row, i) => (
+                                                                    <TableRow key={i} className="text-xs hover:bg-muted/20">
+                                                                        {rawData.columns.map((col) => (
+                                                                            <TableCell key={col} className="px-3 py-1.5 whitespace-nowrap text-xs">
+                                                                                {String(row[col] ?? "")}
+                                                                            </TableCell>
+                                                                        ))}
+                                                                    </TableRow>
+                                                                ))}
+                                                            </TableBody>
+                                                        </Table>
+                                                    </div>
+                                                    <ScrollBar orientation="horizontal" />
+                                                    <ScrollBar orientation="vertical" />
+                                                </ScrollArea>
+                                            </div>
+                                        ) : (
+                                            <div className="h-full flex items-center justify-center text-muted-foreground text-sm border rounded-md">
+                                                <Spinner className="w-4 h-4 mr-2" /> Loading preview...
+                                            </div>
+                                        )}
+                                    </CardContent>
+                                </Card>
+                            </div>
+                        </div>
+                    )}
+
+                    {mode === 'review' && result && (
+                        <div className="h-full grid grid-cols-2 gap-4 p-4 overflow-hidden">
+                            {/* Left Panel: Analysis Info + Code */}
+                            <div className="flex flex-col gap-3 overflow-y-auto pr-2">
+                                {/* Summary */}
+                                <Card className="shrink-0">
+                                    <CardHeader className="py-3">
+                                        <CardTitle className="text-sm flex items-center gap-2">
+                                            <Wand2 className="w-4 h-4 text-purple-500" />
+                                            Analysis Summary
+                                        </CardTitle>
+                                    </CardHeader>
+                                    <CardContent className="py-0 pb-3">
+                                        <p className="text-sm text-muted-foreground leading-relaxed bg-muted/30 p-3 rounded-md">
+                                            {result.summary}
+                                        </p>
+                                    </CardContent>
+                                </Card>
+
+                                {/* Issues */}
+                                {result.issues_found?.length > 0 && (
+                                    <Card className="border-amber-300/50 shrink-0">
+                                        <CardHeader className="py-3">
+                                            <CardTitle className="text-sm flex items-center gap-2 text-amber-600">
+                                                <AlertTriangle className="w-4 h-4" />
+                                                Issues Detected ({result.issues_found.length})
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="py-0 pb-3">
+                                            <ul className="text-xs space-y-1.5">
+                                                {result.issues_found.map((issue, i) => (
+                                                    <li key={i} className="flex items-start gap-2 bg-amber-50/50 dark:bg-amber-900/10 p-2 rounded text-amber-900 dark:text-amber-100">
+                                                        <span className="text-amber-500">•</span>
+                                                        <span>{issue}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </CardContent>
+                                    </Card>
+                                )}
+
+                                {/* Refine */}
+                                <Card className="border-blue-300/50 bg-blue-50/30 dark:bg-blue-900/10 shrink-0">
+                                    <CardHeader className="py-2">
+                                        <CardTitle className="text-sm flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                                            <Wand2 className="w-4 h-4" />
+                                            Refine with AI
+                                        </CardTitle>
+                                    </CardHeader>
+                                    <CardContent className="py-0 pb-3 flex gap-2">
+                                        <Input
+                                            placeholder="e.g., 'Fix the date format', 'Remove empty rows'..."
+                                            value={feedback}
+                                            onChange={(e) => setFeedback(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && handleRefine()}
+                                            className="bg-background text-sm"
+                                        />
+                                        <Button size="sm" onClick={handleRefine} disabled={isRefining || !feedback.trim()}>
+                                            {isRefining ? <Spinner className="w-4 h-4" /> : "Fix"}
+                                        </Button>
+                                    </CardContent>
+                                </Card>
+
+                                {/* Transform Code - Collapsible */}
+                                <Collapsible open={isCodeExpanded} onOpenChange={setIsCodeExpanded} className="shrink-0">
+                                    <Card>
+                                        <CollapsibleTrigger className="w-full">
+                                            <CardHeader className="py-3 cursor-pointer hover:bg-muted/30 transition-colors">
+                                                <CardTitle className="text-sm flex items-center justify-between">
+                                                    <span className="flex items-center gap-2">
+                                                        <Code className="w-4 h-4" />
+                                                        Transformation Code (Python)
+                                                    </span>
+                                                    <div className="flex items-center gap-2">
+                                                        <Button size="sm" variant="outline" className="h-6 text-xs" onClick={(e) => { e.stopPropagation(); handlePreviewTransform(); }}>
+                                                            {step === 'previewing' ? <Spinner className="w-3 h-3 mr-1" /> : <Play className="w-3 h-3 mr-1" />}
+                                                            Run
+                                                        </Button>
+                                                        <ChevronDown className={cn("w-4 h-4 transition-transform", !isCodeExpanded && "-rotate-90")} />
+                                                    </div>
+                                                </CardTitle>
+                                            </CardHeader>
+                                        </CollapsibleTrigger>
+                                        <CollapsibleContent>
+                                            <CardContent className="py-0 pb-3">
+                                                <Textarea
+                                                    className="font-mono text-xs bg-slate-950 text-slate-50 min-h-[150px] resize-none"
+                                                    value={editedCode}
+                                                    onChange={(e) => setEditedCode(e.target.value)}
+                                                />
+                                            </CardContent>
+                                        </CollapsibleContent>
+                                    </Card>
+                                </Collapsible>
+                            </div>
+
+                            {/* Right Panel: Data Previews */}
+                            <div className="flex flex-col gap-3 overflow-y-auto pr-2">{/* Allow scrolling */}                             {/* Raw Data Preview */}
+                                <Card className="shrink-0 overflow-hidden">
+                                    <CardHeader className="py-2 shrink-0">
+                                        <CardTitle className="text-sm flex items-center justify-between">
+                                            <span className="flex items-center gap-2">
+                                                <Database className="w-4 h-4 text-muted-foreground" />
+                                                Raw Data (Before)
+                                            </span>
+                                            <Badge variant="outline" className="text-[10px]">First 20 rows</Badge>
+                                        </CardTitle>
+                                    </CardHeader>
+                                    <CardContent className="py-0 pb-3">
+                                        {rawDataError ? (
+                                            <Alert variant="destructive">
+                                                <AlertTitle className="text-sm">Failed to Load</AlertTitle>
+                                                <AlertDescription className="text-xs">{rawDataError}</AlertDescription>
+                                            </Alert>
+                                        ) : rawData ? renderDataTable(rawData, "h-[250px]") : (
+                                            <div className="h-[250px] flex items-center justify-center text-muted-foreground text-sm border rounded-md">
+                                                <Spinner className="w-4 h-4 mr-2" /> Loading...
+                                            </div>
+                                        )}
+                                    </CardContent>
+                                </Card>
+
+                                {/* Arrow */}
+                                <div className="flex items-center justify-center shrink-0">
+                                    <div className="flex items-center gap-2 text-muted-foreground">
+                                        <div className="h-px w-12 bg-border" />
+                                        <ArrowRight className="w-4 h-4" />
+                                        <span className="text-xs">Transformation</span>
+                                        <ArrowRight className="w-4 h-4" />
+                                        <div className="h-px w-12 bg-border" />
+                                    </div>
+                                </div>
+
+                                {/* Transformed Data Preview */}
+                                <Card className="shrink-0 overflow-hidden border-primary/30 bg-primary/5">
+                                    <CardHeader className="py-2 shrink-0">
+                                        <CardTitle className="text-sm flex items-center justify-between">
+                                            <span className="flex items-center gap-2">
+                                                <Eye className="w-4 h-4 text-primary" />
+                                                Transformed Data (After)
+                                            </span>
+                                            <Badge variant="secondary" className="text-[10px]">First 20 rows</Badge>
+                                        </CardTitle>
+                                    </CardHeader>
+                                    <CardContent className="py-0 pb-3">
+                                        {previewError && (
+                                            <Alert variant="destructive" className="mb-2">
+                                                <AlertTitle className="text-sm">Preview Failed</AlertTitle>
+                                                <AlertDescription className="text-xs">{previewError}</AlertDescription>
+                                            </Alert>
+                                        )}
+                                        {previewData ? renderDataTable(previewData, "h-[250px]") : (
+                                            <div className="h-[250px] flex items-center justify-center text-muted-foreground text-sm border rounded-md bg-muted/10">
+                                                Click "Run" to preview transformation
+                                            </div>
+                                        )}
+                                    </CardContent>
+                                </Card>
+                            </div>
                         </div>
                     )}
                 </div>
 
-                <DialogFooter className="px-6 py-4 border-t bg-muted/20">
-                    <Button variant="ghost" onClick={() => handleOpenChange(false)}>
-                        Cancel
-                    </Button>
-
-                    {step === 'input' && (
-                        <Button onClick={handleAnalyze} className="gap-2">
-                            <Wand2 className="w-4 h-4" /> Analyze
+                {/* Footer - only show in review mode */}
+                {mode === 'review' && (
+                    <DialogFooter className="px-6 py-3 border-t shrink-0 flex items-center justify-between">
+                        <Button variant="outline" onClick={onClose}>
+                            Cancel
                         </Button>
-                    )}
 
-                    {(step === 'review' || step === 'previewing' || step === 'saving') && (
                         <div className="flex items-center gap-4">
-                            <RadioGroup
-                                value={saveMode}
-                                onValueChange={(v: string) => setSaveMode(v as 'replace' | 'new')}
-                                className="flex gap-4"
-                            >
+                            <RadioGroup value={saveMode} onValueChange={(v) => setSaveMode(v as 'replace' | 'new')} className="flex gap-4">
                                 <div className="flex items-center space-x-2">
                                     <RadioGroupItem value="replace" id="replace" />
-                                    <Label htmlFor="replace" className="text-sm cursor-pointer">Replace Current Table</Label>
+                                    <Label htmlFor="replace" className="text-sm cursor-pointer">Replace Table</Label>
                                 </div>
                                 <div className="flex items-center space-x-2">
                                     <RadioGroupItem value="new" id="new" />
-                                    <Label htmlFor="new" className="text-sm cursor-pointer">Save as New Table</Label>
+                                    <Label htmlFor="new" className="text-sm cursor-pointer">Save as New</Label>
                                 </div>
                             </RadioGroup>
                             <Button onClick={handleSave} disabled={step === 'saving'} className="gap-2">
-                                {step === 'saving' ? (
-                                    <Spinner />
-                                ) : (
-                                    <Save className="w-4 h-4" />
-                                )}
+                                {step === 'saving' ? <Spinner className="w-4 h-4" /> : <Save className="w-4 h-4" />}
                                 {saveMode === 'replace' ? 'Apply & Replace' : 'Save as New'}
                             </Button>
                         </div>
-                    )}
-                </DialogFooter>
+                    </DialogFooter>
+                )}
             </DialogContent>
         </Dialog>
     );

@@ -31,10 +31,10 @@ def _get_gemini_client():
     if _GEMINI_CLIENT is None:
         with _CLIENT_LOCK:
             if _GEMINI_CLIENT is None:
-                if not settings.gemini_api_key:
-                    raise RuntimeError("GEMINI_API_KEY is not configured.")
+                if not settings.google_api_key:
+                    raise RuntimeError("GOOGLE_API_KEY is not configured.")
                 import google.genai as genai
-                _GEMINI_CLIENT = genai.Client(api_key=settings.gemini_api_key)
+                _GEMINI_CLIENT = genai.Client(api_key=settings.google_api_key)
     return _GEMINI_CLIENT
 
 

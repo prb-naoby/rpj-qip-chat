@@ -16,7 +16,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # JWT Configuration
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "qip-data-assistant-secret-key-change-this")
+_DEFAULT_SECRET = "qip-data-assistant-secret-key-change-this"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", _DEFAULT_SECRET)
+
+# Warn if using insecure default (but don't fail for development)
+if SECRET_KEY == _DEFAULT_SECRET:
+    import logging
+    logging.getLogger(__name__).warning(
+        "⚠️ SECURITY WARNING: Using default JWT_SECRET_KEY. "
+        "Set JWT_SECRET_KEY environment variable in production!"
+    )
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
 

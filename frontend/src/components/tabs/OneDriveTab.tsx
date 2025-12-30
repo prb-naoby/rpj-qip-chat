@@ -402,7 +402,7 @@ export default function OneDriveTab() {
                 selectedSheet: selectedSheet || undefined,
                 displayName: displayName
             };
-            console.log('Submitting job with metadata:', metadata); // Debug log
+            // Job submission with metadata
             const response = await api.analyzeFile(previewTableId, transformInput || undefined, metadata);
             const jobId = response.data.job_id;
 
@@ -680,14 +680,15 @@ export default function OneDriveTab() {
 
     return (
         <div className="space-y-4">
-            {/* Active Jobs Queue */}
+            {/* Jobs Queue - compact mode */}
             <JobStatusList
                 jobs={jobs}
                 isLoading={isJobsLoading}
-                title="Active Jobs Queue"
+                title="Jobs"
                 className="mb-4"
-                onJobClick={handleJobClick}
                 onJobsChange={refreshJobs}
+                compact={true}
+                defaultCollapsed={true}
             />
 
             {/* Collapsible File Browser */}

@@ -7,6 +7,8 @@ export interface JobState {
     result?: any;
     error?: string;
     user_id: string;
+    user_username?: string;
+    user_email?: string;
     job_type: string;
     submitted_at: string;
     started_at?: string;
@@ -62,9 +64,6 @@ export function useUserJobs(options: UseUserJobsOptions = {}) {
 
     // Smart polling: fast when active jobs, slower otherwise
     useEffect(() => {
-        // Initial fetch
-        fetchJobs();
-
         const startPolling = (hasActive: boolean) => {
             // Clear existing intervals
             if (intervalRef.current) {
@@ -85,18 +84,14 @@ export function useUserJobs(options: UseUserJobsOptions = {}) {
             }
         };
 
-        // Check and setup polling
-        const checkAndPoll = async () => {
+        // Single initial fetch and setup polling based on result
+        const initPolling = async () => {
             const currentJobs = await fetchJobs();
             const hasActive = currentJobs.some((j: JobState) => j.status === 'pending' || j.status === 'running');
             startPolling(hasActive);
         };
 
-        checkAndPoll();
-
-        // Re-evaluate polling speed when jobs change
-        const hasActive = jobs.some(j => j.status === 'pending' || j.status === 'running');
-        startPolling(hasActive);
+        initPolling();
 
         return () => {
             if (intervalRef.current) {

@@ -4,16 +4,35 @@ __pycache__/
 *$py.class
 .venv/
 .env
+*.egg-info/
+.pytest_cache/
 
 # Data
 data/
 *.db
 *.sqlite3
 uploads/
+*.parquet
 
 # IDE
 .vscode/
 .idea/
+*.code-workspace
+.gemini
 
 # Logs
 logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (frontend)
+node_modules/
+.next/
+
+# Build artifacts
+dist/
+build/
+*.egg

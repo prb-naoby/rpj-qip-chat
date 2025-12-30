@@ -9,8 +9,25 @@ import json
 from typing import Any, Optional
 import redis
 from dotenv import load_dotenv
+import numpy as np
 
 load_dotenv()
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles numpy types."""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        elif hasattr(obj, 'isoformat'):  # datetime-like objects
+            return obj.isoformat()
+        return super().default(obj)
 
 class RedisClient:
     _instance = None
@@ -49,7 +66,8 @@ class RedisClient:
         if not self.is_connected:
             return False
         try:
-            val_str = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
+            # Use NumpyEncoder to handle numpy types from pandas DataFrames
+            val_str = json.dumps(value, cls=NumpyEncoder) if isinstance(value, (dict, list)) else str(value)
             self.client.setex(key, expire_seconds, val_str)
             return True
         except Exception as e:

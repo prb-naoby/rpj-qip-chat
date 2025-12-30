@@ -36,6 +36,8 @@ services:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JOB_MAX_WORKERS=${JOB_MAX_WORKERS:-2}
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:1234/health" ]
       interval: 30s

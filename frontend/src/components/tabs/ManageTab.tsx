@@ -4,7 +4,7 @@
  * Manage Tables Tab Component
  * View and manage cached data tables
  */
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { fetchTables, deleteTable, TableInfo } from '@/store/slices/tablesSlice';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,7 +13,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Eye, Pencil, Download } from 'lucide-react';
+import { Eye, Pencil, Download, X, ChevronRight } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Spinner } from '@/components/ui/spinner';
 import { DataPreview } from '@/components/DataPreview';
 import { Textarea } from '@/components/ui/textarea';
@@ -65,10 +66,26 @@ export default function ManageTab() {
     const [editName, setEditName] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
     const [isSavingDescription, setIsSavingDescription] = useState(false);
-    const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
+    const [expandedTableId, setExpandedTableId] = useState<string | null>(null);
+    const [previewData, setPreviewData] = useState<{ columns: string[], data: any[] } | null>(null);
+    const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+
+    const [selectedJobResult, setSelectedJobResult] = useState<any | null>(null);
 
     const handleRefresh = () => {
         dispatch(fetchTables());
+    };
+
+    const handleJobClick = (job: any) => {
+        // Accept both 'analyze' and 'analyze_transform' job types
+        const isAnalyzeJob = job.job_type === 'analyze' || job.job_type === 'analyze_transform';
+        if (job.status === 'completed' && isAnalyzeJob && job.result) {
+            setAnalysisTarget({
+                tableId: job.metadata?.previewTableId || '', // Fallback if missing
+                tableName: job.metadata?.displayName || 'Analysis Result'
+            });
+            setSelectedJobResult(job.result);
+        }
     };
 
     const handleConfirmDelete = async () => {
@@ -88,7 +105,12 @@ export default function ManageTab() {
 
     const handleAnalysisSuccess = () => {
         dispatch(fetchTables());
+        // Do not close immediately here if we want to show result? 
+        // Actually, for "New Analysis" mode, Dialog closes on submit.
+        // For "Review" mode, Refine/Save might trigger this.
+        // If Save -> Dialog closes -> Refresh tables.
         setAnalysisTarget(null);
+        setSelectedJobResult(null);
     };
 
     const handleEditClick = (table: TableInfo) => {
@@ -149,9 +171,10 @@ export default function ManageTab() {
                     <JobStatusList
                         jobs={jobs}
                         isLoading={isJobsLoading}
-                        title="Active Jobs"
+                        title="Jobs"
                         className="mb-4"
                         onJobsChange={refreshJobs}
+                        onJobClick={handleJobClick}
                     />
                     {tables.length === 0 ? (
                         <div className="text-center py-8 text-muted-foreground">
@@ -160,174 +183,258 @@ export default function ManageTab() {
                             <p className="text-sm">Upload file atau sync dari OneDrive untuk memulai.</p>
                         </div>
                     ) : (
-                        <ScrollArea className="w-full h-[600px] border rounded-md">
-                            <div className="min-w-[700px]">
-                                <Table>
-                                    <TableHeader className="bg-muted/50 sticky top-0 z-10">
-                                        <TableRow className="border-border hover:bg-muted/50">
-                                            <TableHead className="text-muted-foreground w-[40%]">Name</TableHead>
-                                            <TableHead className="text-muted-foreground w-[10%]">Rows</TableHead>
-                                            <TableHead className="text-muted-foreground w-[10%]">Cols</TableHead>
-                                            <TableHead className="text-muted-foreground w-[10%]">Size</TableHead>
-                                            <TableHead className="text-muted-foreground w-[15%]">Cached</TableHead>
-                                            <TableHead className="text-muted-foreground text-right w-[15%]">Actions</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        <AnimatePresence>
-                                            {tables.map((table: TableInfo, index: number) => (
-                                                <motion.tr
-                                                    key={table.cache_path}
-                                                    initial={{ opacity: 0, y: 10 }}
-                                                    animate={{ opacity: 1, y: 0 }}
-                                                    exit={{ opacity: 0, x: -20 }}
-                                                    transition={{ delay: index * 0.05, duration: 0.2 }}
-                                                    className="border-border hover:bg-muted/50 transition-colors"
-                                                >
-                                                    <TableCell className="font-medium text-foreground">
-                                                        <div className="max-w-[400px] font-medium break-words whitespace-normal">
-                                                            {table.display_name}
-                                                        </div>
-                                                        {table.description && (
-                                                            <Tooltip>
-                                                                <TooltipTrigger asChild>
-                                                                    <div className="text-xs text-muted-foreground truncate">
-                                                                        {table.description}
-                                                                    </div>
-                                                                </TooltipTrigger>
-                                                                <TooltipContent className="max-w-md">
-                                                                    <p>{table.description}</p>
-                                                                </TooltipContent>
-                                                            </Tooltip>
+                        <Collapsible defaultOpen>
+                            <CollapsibleTrigger className="flex items-center justify-between w-full p-3 hover:bg-muted/30 rounded-md transition-colors mb-2">
+                                <span className="flex items-center gap-2 text-sm font-medium">
+                                    <ChevronRight className="w-4 h-4 transition-transform [[data-state=open]>&]:rotate-90" />
+                                    📋 Cached Tables ({tables.length})
+                                </span>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent>
+                                <div className="rounded-md border">
+                                    <Table>
+                                        <TableHeader className="bg-muted/50">
+                                            <TableRow className="border-border hover:bg-muted/50">
+                                                <TableHead className="text-muted-foreground w-[40%]">Name</TableHead>
+                                                <TableHead className="text-muted-foreground w-[10%]">Rows</TableHead>
+                                                <TableHead className="text-muted-foreground w-[10%]">Cols</TableHead>
+                                                <TableHead className="text-muted-foreground w-[10%]">Size</TableHead>
+                                                <TableHead className="text-muted-foreground w-[15%]">Cached</TableHead>
+                                                <TableHead className="text-muted-foreground text-right w-[15%]">Actions</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            <AnimatePresence>
+                                                {tables.map((table: TableInfo, index: number) => (
+                                                    <React.Fragment key={table.cache_path}>
+                                                        <motion.tr
+                                                            initial={{ opacity: 0, y: 10 }}
+                                                            animate={{ opacity: 1, y: 0 }}
+                                                            exit={{ opacity: 0, x: -20 }}
+                                                            transition={{ delay: index * 0.05, duration: 0.2 }}
+                                                            className="border-border hover:bg-muted/50 transition-colors"
+                                                        >
+                                                            <TableCell className="font-medium text-foreground">
+                                                                <div className="max-w-[400px] font-medium break-words whitespace-normal">
+                                                                    {table.display_name}
+                                                                </div>
+                                                                {table.description && (
+                                                                    <Tooltip>
+                                                                        <TooltipTrigger asChild>
+                                                                            <div className="text-xs text-muted-foreground truncate">
+                                                                                {table.description}
+                                                                            </div>
+                                                                        </TooltipTrigger>
+                                                                        <TooltipContent className="max-w-md">
+                                                                            <p>{table.description}</p>
+                                                                        </TooltipContent>
+                                                                    </Tooltip>
+                                                                )}
+                                                            </TableCell>
+                                                            <TableCell className="text-muted-foreground">
+                                                                {table.n_rows.toLocaleString()}
+                                                            </TableCell>
+                                                            <TableCell className="text-muted-foreground">
+                                                                {table.n_cols}
+                                                            </TableCell>
+                                                            <TableCell className="text-muted-foreground">
+                                                                {formatSize(table.file_size_mb)}
+                                                            </TableCell>
+                                                            <TableCell className="text-muted-foreground">
+                                                                {formatDate(table.cached_at)}
+                                                            </TableCell>
+                                                            <TableCell className="text-right flex justify-end gap-1">
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="icon-sm"
+                                                                            onClick={async () => {
+                                                                                const isExpanding = expandedTableId !== table.cache_path;
+                                                                                setExpandedTableId(isExpanding ? table.cache_path : null);
+                                                                                if (isExpanding) {
+                                                                                    setIsLoadingPreview(true);
+                                                                                    try {
+                                                                                        const res = await api.getTablePreview(table.cache_path, 20);
+                                                                                        setPreviewData({ columns: res.data.columns, data: res.data.data });
+                                                                                    } catch (err) {
+                                                                                        toast.error('Failed to load preview');
+                                                                                    } finally {
+                                                                                        setIsLoadingPreview(false);
+                                                                                    }
+                                                                                }
+                                                                            }}
+                                                                            className={expandedTableId === table.cache_path
+                                                                                ? "text-primary bg-primary/10"
+                                                                                : "text-muted-foreground hover:text-foreground"
+                                                                            }
+                                                                            aria-label="Preview table"
+                                                                        >
+                                                                            <Eye className="h-4 w-4" />
+                                                                        </Button>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent>
+                                                                        <p>Preview Data</p>
+                                                                    </TooltipContent>
+                                                                </Tooltip>
+
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="icon-sm"
+                                                                            onClick={() => handleEditClick(table)}
+                                                                            className="text-muted-foreground hover:text-foreground hover:bg-muted"
+                                                                            aria-label="Edit description"
+                                                                        >
+                                                                            <Pencil className="h-4 w-4" />
+                                                                        </Button>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent>
+                                                                        <p>Edit Description</p>
+                                                                    </TooltipContent>
+                                                                </Tooltip>
+
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="icon-sm"
+                                                                            onClick={() => {
+                                                                                const filename = table.display_name.replace(/[^a-zA-Z0-9]/g, '_') + '.csv';
+                                                                                api.downloadTableCsv(table.cache_path, filename);
+                                                                                toast.success('Download started!');
+                                                                            }}
+                                                                            className="text-green-500 hover:text-green-600 hover:bg-green-500/10"
+                                                                            aria-label="Download as CSV"
+                                                                        >
+                                                                            <Download className="h-4 w-4" />
+                                                                        </Button>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent>
+                                                                        <p>Download as CSV</p>
+                                                                    </TooltipContent>
+                                                                </Tooltip>
+
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="icon-sm"
+                                                                            onClick={() => {
+                                                                                setAnalysisTarget({
+                                                                                    tableId: table.cache_path,
+                                                                                    tableName: table.display_name
+                                                                                });
+                                                                                setSelectedJobResult(null); // Ensure clean state for new analysis
+                                                                            }}
+                                                                            className="text-blue-500 hover:text-blue-600 hover:bg-blue-500/10"
+                                                                            aria-label="Analyze & Transform"
+                                                                        >
+                                                                            ✨
+                                                                        </Button>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent>
+                                                                        <p>Analyze & Transform Data</p>
+                                                                    </TooltipContent>
+                                                                </Tooltip>
+
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="icon-sm"
+                                                                            onClick={() => setDeleteTarget({
+                                                                                cachePath: table.cache_path,
+                                                                                displayName: table.display_name
+                                                                            })}
+                                                                            className="text-destructive hover:text-destructive hover:bg-destructive/10 active:scale-[0.95]"
+                                                                            aria-label={`Hapus tabel ${table.display_name}`}
+                                                                        >
+                                                                            🗑️
+                                                                        </Button>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent>
+                                                                        <p>Delete this table</p>
+                                                                    </TooltipContent>
+                                                                </Tooltip>
+                                                            </TableCell>
+                                                        </motion.tr>
+                                                        {/* Expandable Preview Row */}
+                                                        {expandedTableId === table.cache_path && (
+                                                            <motion.tr
+                                                                key={`${table.cache_path}-preview`}
+                                                                initial={{ opacity: 0 }}
+                                                                animate={{ opacity: 1 }}
+                                                                exit={{ opacity: 0 }}
+                                                                className="border-0 bg-muted/30"
+                                                            >
+                                                                <TableCell colSpan={6} className="p-4 max-w-0 w-full">
+                                                                    {isLoadingPreview ? (
+                                                                        <div className="flex items-center justify-center py-8">
+                                                                            <Spinner className="w-5 h-5 mr-2" /> Loading preview...
+                                                                        </div>
+                                                                    ) : previewData ? (
+                                                                        <div className="space-y-2">
+                                                                            <div className="flex items-center justify-between">
+                                                                                <div className="text-sm font-medium text-muted-foreground">Preview (First 20 rows)</div>
+                                                                                <Button
+                                                                                    variant="ghost"
+                                                                                    size="sm"
+                                                                                    onClick={() => setExpandedTableId(null)}
+                                                                                    className="h-6 w-6 p-0"
+                                                                                >
+                                                                                    <X className="w-4 h-4" />
+                                                                                </Button>
+                                                                            </div>
+                                                                            <div className="rounded-md border bg-background w-full block">
+                                                                                <ScrollArea className="h-[300px] w-full">
+                                                                                    <div className="min-w-max">
+                                                                                        <Table>
+                                                                                            <TableHeader>
+                                                                                                <TableRow>
+                                                                                                    {previewData.columns.map((col) => (
+                                                                                                        <TableHead key={col} className="bg-muted/50 px-3 py-2 whitespace-nowrap font-medium sticky top-0 z-10 text-xs">
+                                                                                                            {col}
+                                                                                                        </TableHead>
+                                                                                                    ))}
+                                                                                                </TableRow>
+                                                                                            </TableHeader>
+                                                                                            <TableBody>
+                                                                                                {previewData.data.map((row, i) => (
+                                                                                                    <TableRow key={i} className="text-xs hover:bg-muted/20">
+                                                                                                        {previewData.columns.map((col) => (
+                                                                                                            <TableCell key={col} className="px-3 py-1.5 whitespace-nowrap text-xs">
+                                                                                                                {String(row[col] ?? "")}
+                                                                                                            </TableCell>
+                                                                                                        ))}
+                                                                                                    </TableRow>
+                                                                                                ))}
+                                                                                            </TableBody>
+                                                                                        </Table>
+                                                                                    </div>
+                                                                                    <ScrollBar orientation="horizontal" />
+                                                                                    <ScrollBar orientation="vertical" />
+                                                                                </ScrollArea>
+                                                                            </div>
+                                                                        </div>
+                                                                    ) : null}
+                                                                </TableCell>
+                                                            </motion.tr>
                                                         )}
-                                                    </TableCell>
-                                                    <TableCell className="text-muted-foreground">
-                                                        {table.n_rows.toLocaleString()}
-                                                    </TableCell>
-                                                    <TableCell className="text-muted-foreground">
-                                                        {table.n_cols}
-                                                    </TableCell>
-                                                    <TableCell className="text-muted-foreground">
-                                                        {formatSize(table.file_size_mb)}
-                                                    </TableCell>
-                                                    <TableCell className="text-muted-foreground">
-                                                        {formatDate(table.cached_at)}
-                                                    </TableCell>
-                                                    <TableCell className="text-right flex justify-end gap-1">
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="icon-sm"
-                                                                    onClick={() => setSelectedTableId(
-                                                                        selectedTableId === table.cache_path ? null : table.cache_path
-                                                                    )}
-                                                                    className={selectedTableId === table.cache_path
-                                                                        ? "text-primary bg-primary/10"
-                                                                        : "text-muted-foreground hover:text-foreground"
-                                                                    }
-                                                                    aria-label="Preview table"
-                                                                >
-                                                                    <Eye className="h-4 w-4" />
-                                                                </Button>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent>
-                                                                <p>Preview Data</p>
-                                                            </TooltipContent>
-                                                        </Tooltip>
-
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="icon-sm"
-                                                                    onClick={() => handleEditClick(table)}
-                                                                    className="text-muted-foreground hover:text-foreground hover:bg-muted"
-                                                                    aria-label="Edit description"
-                                                                >
-                                                                    <Pencil className="h-4 w-4" />
-                                                                </Button>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent>
-                                                                <p>Edit Description</p>
-                                                            </TooltipContent>
-                                                        </Tooltip>
-
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="icon-sm"
-                                                                    onClick={() => {
-                                                                        const filename = table.display_name.replace(/[^a-zA-Z0-9]/g, '_') + '.csv';
-                                                                        api.downloadTableCsv(table.cache_path, filename);
-                                                                        toast.success('Download started!');
-                                                                    }}
-                                                                    className="text-green-500 hover:text-green-600 hover:bg-green-500/10"
-                                                                    aria-label="Download as CSV"
-                                                                >
-                                                                    <Download className="h-4 w-4" />
-                                                                </Button>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent>
-                                                                <p>Download as CSV</p>
-                                                            </TooltipContent>
-                                                        </Tooltip>
-
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="icon-sm"
-                                                                    onClick={() => setAnalysisTarget({
-                                                                        tableId: table.cache_path,
-                                                                        tableName: table.display_name
-                                                                    })}
-                                                                    className="text-blue-500 hover:text-blue-600 hover:bg-blue-500/10"
-                                                                    aria-label="Analyze & Transform"
-                                                                >
-                                                                    ✨
-                                                                </Button>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent>
-                                                                <p>Analyze & Transform Data</p>
-                                                            </TooltipContent>
-                                                        </Tooltip>
-
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="icon-sm"
-                                                                    onClick={() => setDeleteTarget({
-                                                                        cachePath: table.cache_path,
-                                                                        displayName: table.display_name
-                                                                    })}
-                                                                    className="text-destructive hover:text-destructive hover:bg-destructive/10 active:scale-[0.95]"
-                                                                    aria-label={`Hapus tabel ${table.display_name}`}
-                                                                >
-                                                                    🗑️
-                                                                </Button>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent>
-                                                                <p>Delete this table</p>
-                                                            </TooltipContent>
-                                                        </Tooltip>
-                                                    </TableCell>
-                                                </motion.tr>
-                                            ))}
-                                        </AnimatePresence>
-                                    </TableBody>
-                                </Table>
-                            </div>
-                            <ScrollBar orientation="horizontal" />
-                            <ScrollBar orientation="vertical" />
-                        </ScrollArea>
+                                                    </React.Fragment>
+                                                ))}
+                                            </AnimatePresence>
+                                        </TableBody>
+                                    </Table>
+                                </div>
+                            </CollapsibleContent>
+                        </Collapsible>
                     )}
                 </CardContent>
             </Card>
 
-            <DataPreview tableId={selectedTableId} title="Table Preview" />
+            {/* Preview is now inline in the table */}
 
             {/* Analysis Dialog */}
             {
@@ -336,8 +443,12 @@ export default function ManageTab() {
                         tableId={analysisTarget.tableId}
                         tableName={analysisTarget.tableName}
                         isOpen={!!analysisTarget}
-                        onClose={() => setAnalysisTarget(null)}
+                        onClose={() => {
+                            setAnalysisTarget(null);
+                            setSelectedJobResult(null);
+                        }}
                         onSuccess={handleAnalysisSuccess}
+                        initialJobResult={selectedJobResult}
                     />
                 )
             }

@@ -17,7 +17,6 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from api import auth_utils, database, chat_service
-from api.chat_utils import generate_chat_title
 from api.intent_classifier import interpret_table_selection, generate_clarification_message, classify_user_intent
 from app.job_manager import job_manager, JobStatus
 from app.data_store import DatasetCatalog
@@ -36,7 +35,7 @@ from app.qa_engine import PandasAIClient
 from app.table_router import route_question_to_tables, format_routing_explanation
 from app.data_analyzer import analyze_and_generate_transform, execute_transform, regenerate_with_feedback
 from app import onedrive_config, onedrive_client
-from app.settings import AppSettings
+from app.settings import AppSettings, safe_resolve_path
 
 import pandas as pd
 from pathlib import Path
@@ -451,7 +450,12 @@ async def get_table_preview(
 ):
     """Get preview of a table."""
     try:
-        cache_path = Path(table_id)
+        # Validate path to prevent traversal attacks
+        try:
+            cache_path = safe_resolve_path(table_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid table path")
+            
         if not cache_path.exists():
             raise HTTPException(status_code=404, detail="Table not found")
         
@@ -464,8 +468,10 @@ async def get_table_preview(
             "data": df.fillna("").to_dict(orient="records"),
             "total_rows": len(df)
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to load table preview")
 
 
 class UpdateDescriptionRequest(BaseModel):
@@ -482,8 +488,12 @@ async def update_table_description(
 ):
     """Update table description and column descriptions."""
     try:
-        # Extract cache_id from cache_path (filename without extension)
-        cache_path = Path(table_id)
+        # Validate path to prevent traversal attacks
+        try:
+            cache_path = safe_resolve_path(table_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid table path")
+            
         if not cache_path.exists():
             raise HTTPException(status_code=404, detail="Table not found")
         
@@ -502,8 +512,10 @@ async def update_table_description(
         )
         
         return {"message": "Description updated successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to update table")
 
 
 @router.delete("/api/tables/{table_id:path}")
@@ -513,11 +525,18 @@ async def delete_table(
 ):
     """Delete a cached table."""
     try:
-        cache_path = Path(table_id)
+        # Validate path to prevent traversal attacks
+        try:
+            cache_path = safe_resolve_path(table_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid table path")
+            
         await run_in_threadpool(delete_cached_data, cache_path)
         return {"message": "Table deleted successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to delete table")
 
 
 @router.get("/api/tables/{table_id:path}/download")
@@ -528,7 +547,12 @@ async def download_table_csv(
     """Download a table as CSV file."""
     import io
     
-    cache_path = Path(table_id)
+    # Validate path to prevent traversal attacks
+    try:
+        cache_path = safe_resolve_path(table_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid table path")
+        
     if not cache_path.exists():
         raise HTTPException(status_code=404, detail="Table not found")
     
@@ -546,12 +570,14 @@ async def download_table_csv(
         filename = cache_path.stem + ".csv"
         
         return StreamingResponse(
-            iter([output.getvalue()]),
+            iter([csv_content]),
             media_type="text/csv",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to download table")
 
 
 @router.post("/api/tables/rank")
@@ -634,9 +660,10 @@ async def ask_question(
     current_user: dict = Depends(get_current_user)
 ):
     """Ask a question about a table."""
-    api_key = settings.google_api_key
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Google API Key not configured")
+    # PandasAI uses OpenAI - use openai_api_key
+    openai_key = settings.openai_api_key
+    if not openai_key:
+        raise HTTPException(status_code=500, detail="OpenAI API Key not configured (required for PandasAI)")
 
     # Verify chat ownership
     chat = chat_service.get_chat(request.chat_id, current_user["id"])
@@ -683,7 +710,7 @@ async def ask_question(
             raise HTTPException(status_code=404, detail="Table not found")
         
         df = await run_in_threadpool(pd.read_parquet, cache_path)
-        client = PandasAIClient(api_key=api_key)
+        client = PandasAIClient(api_key=openai_key)
         
         result = await run_in_threadpool(client.ask, df, request.question)
         
@@ -731,9 +758,10 @@ async def stream_chat(
     Stream chat response with Server-Sent Events (SSE).
     Sends progress updates, then final result.
     """
-    api_key = settings.google_api_key or settings.openai_api_key
-    if not api_key:
-        raise HTTPException(status_code=500, detail="No AI API Key configured")
+    # PandasAI uses OpenAI - use openai_api_key
+    openai_key = settings.openai_api_key
+    if not openai_key:
+        raise HTTPException(status_code=500, detail="OpenAI API Key not configured (required for PandasAI)")
         
     # Verify chat ownership
     chat = chat_service.get_chat(request.chat_id, current_user["id"])
@@ -859,7 +887,7 @@ async def stream_chat(
                 if ranked:
                     yield f"data: {json.dumps({'type': 'progress', 'message': 'Selected: ' + ranked[0]['display_name'] + '...'})}\n\n"
             
-            client = PandasAIClient(api_key=api_key)
+            client = PandasAIClient(api_key=openai_key)
             result = None
             successful_table = None
             errors_log = []
@@ -1034,19 +1062,7 @@ Jawaban (dalam Bahasa Indonesia):"""
                     "last_used_table_name": successful_table.get("display_name")
                 }
             )
-            
-            # Auto-generate title for new chats
-            if not previous_history and chat.get("title") == "New Chat":
-                try:
-                    await run_in_threadpool(
-                        generate_chat_title,
-                        original_question,
-                        final_result_obj.response or "Chat",
-                        request.chat_id,
-                        current_user["id"]
-                    )
-                except Exception as e:
-                    print(f"Failed to auto-generate title: {e}")
+    
     
     return StreamingResponse(
         generate(),
@@ -2208,8 +2224,21 @@ async def list_jobs(
     type: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
-    """List background jobs for current user."""
-    return job_manager.get_user_jobs(current_user["id"], job_type=type)
+    """List all background jobs (visible to all users)."""
+    jobs = job_manager.get_user_jobs(current_user["id"], job_type=type)
+    
+    # Enrich jobs with username for owner identification
+    for job in jobs:
+        job_user_id = job.get("user_id")
+        if job_user_id:
+            user = database.get_user_by_id(job_user_id)
+            if user:
+                job["user_username"] = user.get("username")
+                job["user_email"] = user.get("email")
+            else:
+                job["user_username"] = f"User #{job_user_id}"
+    
+    return jobs
 
 @router.get("/api/jobs/{job_id}")
 async def get_job_status(

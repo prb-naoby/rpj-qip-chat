@@ -17,7 +17,7 @@ class TestEmbeddings:
     
     def test_get_gemini_client_success(self):
         """Test successful Gemini client initialization."""
-        with patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'}):
+        with patch.dict('os.environ', {'GOOGLE_API_KEY': 'test-key'}):
             with patch('app.embeddings.genai') as mock_genai:
                 mock_client = Mock()
                 mock_genai.Client.return_value = mock_client
@@ -33,15 +33,15 @@ class TestEmbeddings:
                 mock_genai.Client.assert_called_once()
     
     def test_get_gemini_client_no_api_key(self):
-        """Test error when GEMINI_API_KEY not configured."""
+        """Test error when GOOGLE_API_KEY not configured."""
         with patch('app.embeddings.settings') as mock_settings:
-            mock_settings.gemini_api_key = ""
+            mock_settings.google_api_key = ""
             
             from app.embeddings import _get_client
             import app.embeddings
             app.embeddings._CLIENT = None
             
-            with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+            with pytest.raises(RuntimeError, match="GOOGLE_API_KEY"):
                 _get_client()
     
     # -------------------------------------------------------------------------

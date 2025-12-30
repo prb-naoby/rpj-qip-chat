@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+import { useAppSelector } from '@/store/hooks';
 
 interface JobStatusListProps {
     jobs: JobState[];
@@ -27,6 +28,8 @@ interface JobStatusListProps {
     onJobsChange?: () => void;
     collapsible?: boolean;
     defaultCollapsed?: boolean;
+    maxJobs?: number; // Limit number of displayed jobs
+    compact?: boolean; // Hide edit/delete actions and show smaller UI
 }
 
 // Animation variants
@@ -45,18 +48,31 @@ export function JobStatusList({
     onJobClick,
     onJobsChange,
     collapsible = true,
-    defaultCollapsed = false
+    defaultCollapsed = false,
+    maxJobs,
+    compact = false
 }: JobStatusListProps) {
     const [isOpen, setIsOpen] = useState(!defaultCollapsed);
     const [deletingJobs, setDeletingJobs] = useState<Set<string>>(new Set());
+    const [selectedFilter, setSelectedFilter] = useState<'all' | 'analyze' | 'transform'>('all');
+
+    // Get current user ID for ownership check
+    const currentUserId = useAppSelector((state) => state.auth.user?.id);
 
     // Confirmation dialog state
     const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'single' | 'bulk'; jobId?: string; period?: string; displayName?: string } | null>(null);
 
-    // Filter jobs if typeFilter is provided
-    const displayJobs = typeFilter
+    // Filter jobs by typeFilter prop or local filter
+    const filteredJobs = typeFilter
         ? jobs.filter(job => typeFilter.includes(job.job_type))
-        : jobs;
+        : selectedFilter === 'all'
+            ? jobs
+            : jobs.filter(job => job.job_type === selectedFilter);
+
+    // Apply max limit and sort by newest first
+    const displayJobs = maxJobs
+        ? filteredJobs.slice(0, maxJobs)
+        : filteredJobs;
 
     const confirmDeleteJob = (jobId: string, displayName: string, e?: React.MouseEvent) => {
         e?.stopPropagation();
@@ -135,9 +151,38 @@ export function JobStatusList({
 
     const activeCount = displayJobs.filter(j => j.status === 'running' || j.status === 'pending').length;
 
-    const cardContent = (
+    const jobListContent = (
         <CardContent className="p-0">
-            <ScrollArea className="max-h-[350px]">
+            {/* Filter Tabs - only show if no typeFilter prop */}
+            {!typeFilter && (
+                <div className="flex items-center gap-1 p-2 border-b bg-muted/20">
+                    <Button
+                        variant={selectedFilter === 'all' ? 'default' : 'ghost'}
+                        size="sm"
+                        onClick={() => setSelectedFilter('all')}
+                        className="h-6 px-2 text-[10px]"
+                    >
+                        All ({jobs.length})
+                    </Button>
+                    <Button
+                        variant={selectedFilter === 'analyze' ? 'default' : 'ghost'}
+                        size="sm"
+                        onClick={() => setSelectedFilter('analyze')}
+                        className="h-6 px-2 text-[10px]"
+                    >
+                        Analyze ({jobs.filter(j => j.job_type === 'analyze').length})
+                    </Button>
+                    <Button
+                        variant={selectedFilter === 'transform' ? 'default' : 'ghost'}
+                        size="sm"
+                        onClick={() => setSelectedFilter('transform')}
+                        className="h-6 px-2 text-[10px]"
+                    >
+                        Transform ({jobs.filter(j => j.job_type === 'transform').length})
+                    </Button>
+                </div>
+            )}
+            <ScrollArea className={compact ? "max-h-[150px]" : "max-h-[350px]"}>
                 <AnimatePresence mode="popLayout">
                     {displayJobs.map((job) => (
                         <motion.div
@@ -148,12 +193,13 @@ export function JobStatusList({
                             animate="show"
                             exit="exit"
                             className={cn(
-                                "flex gap-3 p-3 border-b border-border/30 last:border-0 hover:bg-muted/30 transition-colors",
-                                onJobClick && job.status === 'completed' && "cursor-pointer",
+                                "flex gap-3 p-3 border-b border-border/30 last:border-0 transition-colors",
+                                onJobClick && job.status === 'completed' && currentUserId !== undefined && String(job.user_id) === String(currentUserId) && "cursor-pointer hover:bg-muted/30",
                                 deletingJobs.has(job.id) && "opacity-50"
                             )}
                             onClick={() => {
-                                if (onJobClick && job.status === 'completed') {
+                                // Only allow owner to click and continue
+                                if (onJobClick && job.status === 'completed' && currentUserId !== undefined && String(job.user_id) === String(currentUserId)) {
                                     onJobClick(job);
                                 }
                             }}
@@ -173,36 +219,41 @@ export function JobStatusList({
                                             {job.job_type}
                                         </Badge>
                                     </div>
-                                    {/* Actions */}
-                                    <div className="flex items-center gap-1 flex-shrink-0">
-                                        {onJobClick && job.status === 'completed' && (
+                                    {/* Actions - hidden in compact mode */}
+                                    {!compact && (
+                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                            {onJobClick && job.status === 'completed' && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-6 px-2 text-[10px] text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onJobClick(job);
+                                                    }}
+                                                    disabled={currentUserId !== undefined && String(job.user_id) !== String(currentUserId)}
+                                                    title={String(job.user_id) !== String(currentUserId) ? "You can only continue your own jobs" : "View and apply results"}
+                                                >
+                                                    <Eye className="w-3 h-3 mr-1" />
+                                                    View
+                                                </Button>
+                                            )}
                                             <Button
                                                 variant="ghost"
                                                 size="sm"
-                                                className="h-6 px-2 text-[10px] text-primary"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onJobClick(job);
-                                                }}
+                                                className="h-6 w-6 p-0 text-muted-foreground hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                                                onClick={(e) => confirmDeleteJob(job.id, getDisplayName(job), e)}
+                                                disabled={deletingJobs.has(job.id) || (currentUserId !== undefined && String(job.user_id) !== String(currentUserId))}
+                                                title={String(job.user_id) !== String(currentUserId) ? "You can only delete your own jobs" : "Delete job"}
                                             >
-                                                <Eye className="w-3 h-3 mr-1" />
-                                                View
+                                                {deletingJobs.has(job.id) ? (
+                                                    <Spinner className="w-3 h-3" />
+                                                ) : (
+                                                    <Trash2 className="w-3 h-3" />
+                                                )}
                                             </Button>
-                                        )}
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-6 w-6 p-0 text-muted-foreground hover:text-red-500"
-                                            onClick={(e) => confirmDeleteJob(job.id, getDisplayName(job), e)}
-                                            disabled={deletingJobs.has(job.id)}
-                                        >
-                                            {deletingJobs.has(job.id) ? (
-                                                <Spinner className="w-3 h-3" />
-                                            ) : (
-                                                <Trash2 className="w-3 h-3" />
-                                            )}
-                                        </Button>
-                                    </div>
+                                        </div>
+                                    )}
                                 </div>
                                 {/* Status row */}
                                 <div className="flex items-center gap-2 flex-wrap">
@@ -215,6 +266,12 @@ export function JobStatusList({
                                     {job.status === 'pending' && job.queue_position && (
                                         <Badge variant="outline" className="text-[10px] h-4 px-1 leading-none rounded-sm bg-yellow-500/10 text-yellow-600 border-yellow-200">
                                             Queue #{job.queue_position}
+                                        </Badge>
+                                    )}
+                                    {/* Owner badge */}
+                                    {job.user_username && (
+                                        <Badge variant="outline" className="text-[10px] h-4 px-1.5 leading-none rounded-sm bg-muted/50">
+                                            <span className="text-muted-foreground">by:</span> {job.user_username}
                                         </Badge>
                                     )}
                                 </div>
@@ -259,49 +316,51 @@ export function JobStatusList({
                 >
                     {activeCount > 0 ? `${activeCount} active` : `${displayJobs.length} jobs`}
                 </Badge>
-                {/* Clear jobs dropdown */}
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-muted">
-                            <MoreVertical className="w-3 h-3" />
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-48">
-                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-                            Clear History
-                        </div>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                            onClick={(e) => { e.stopPropagation(); confirmClearJobs('hour'); }}
-                            className="gap-2"
-                        >
-                            <Clock className="w-4 h-4 text-muted-foreground" />
-                            <span>Last hour</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                            onClick={(e) => { e.stopPropagation(); confirmClearJobs('today'); }}
-                            className="gap-2"
-                        >
-                            <Clock className="w-4 h-4 text-muted-foreground" />
-                            <span>Today</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                            onClick={(e) => { e.stopPropagation(); confirmClearJobs('3days'); }}
-                            className="gap-2"
-                        >
-                            <Clock className="w-4 h-4 text-muted-foreground" />
-                            <span>Last 3 days</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                            onClick={(e) => { e.stopPropagation(); confirmClearJobs('all'); }}
-                            className="gap-2 text-red-600 focus:text-red-600 focus:bg-red-50"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                            <span>Clear all jobs</span>
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
+                {/* Clear jobs dropdown - hidden in compact mode */}
+                {!compact && (
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-muted">
+                                <MoreVertical className="w-3 h-3" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48">
+                            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                                Clear History
+                            </div>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                                onClick={(e) => { e.stopPropagation(); confirmClearJobs('hour'); }}
+                                className="gap-2"
+                            >
+                                <Clock className="w-4 h-4 text-muted-foreground" />
+                                <span>Last hour</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onClick={(e) => { e.stopPropagation(); confirmClearJobs('today'); }}
+                                className="gap-2"
+                            >
+                                <Clock className="w-4 h-4 text-muted-foreground" />
+                                <span>Today</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onClick={(e) => { e.stopPropagation(); confirmClearJobs('3days'); }}
+                                className="gap-2"
+                            >
+                                <Clock className="w-4 h-4 text-muted-foreground" />
+                                <span>Last 3 days</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                                onClick={(e) => { e.stopPropagation(); confirmClearJobs('all'); }}
+                                className="gap-2 text-red-600 focus:text-red-600 focus:bg-red-50"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                                <span>Clear all jobs</span>
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                )}
             </div>
         </div>
     );
@@ -319,7 +378,7 @@ export function JobStatusList({
                             </CardHeader>
                         </CollapsibleTrigger>
                         <CollapsibleContent>
-                            {cardContent}
+                            {jobListContent}
                         </CollapsibleContent>
                     </Collapsible>
                 </Card>
@@ -367,7 +426,7 @@ export function JobStatusList({
                         {headerContent}
                     </CardTitle>
                 </CardHeader>
-                {cardContent}
+                {jobListContent}
             </Card>
             {/* Delete Confirmation Dialog */}
             <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>

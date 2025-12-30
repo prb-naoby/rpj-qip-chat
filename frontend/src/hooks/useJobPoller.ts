@@ -28,9 +28,20 @@ export function useJobPoller(options: UseJobPollerOptions = {}) {
     useEffect(() => {
         if (options.persistenceKey) {
             const savedJobId = localStorage.getItem(options.persistenceKey);
+            const savedTimestamp = localStorage.getItem(`${options.persistenceKey}_ts`);
+
             if (savedJobId) {
-                // Determine if we should clear it if it's old (optional, skipping for MVP)
-                startPolling(savedJobId);
+                // Check if job is stale (older than 1 hour)
+                const MAX_JOB_AGE_MS = 60 * 60 * 1000; // 1 hour
+                const jobAge = savedTimestamp ? Date.now() - parseInt(savedTimestamp, 10) : Infinity;
+
+                if (jobAge > MAX_JOB_AGE_MS) {
+                    // Job is stale, clean up
+                    localStorage.removeItem(options.persistenceKey);
+                    localStorage.removeItem(`${options.persistenceKey}_ts`);
+                } else {
+                    startPolling(savedJobId);
+                }
             }
         }
     }, [options.persistenceKey]);
@@ -78,6 +89,7 @@ export function useJobPoller(options: UseJobPollerOptions = {}) {
 
         if (options.persistenceKey) {
             localStorage.setItem(options.persistenceKey, jobId);
+            localStorage.setItem(`${options.persistenceKey}_ts`, Date.now().toString());
         }
 
         // Immediate check

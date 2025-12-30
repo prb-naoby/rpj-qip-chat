@@ -79,12 +79,13 @@ def create_chat(user_id: int, title: str = "New Chat") -> Dict[str, Any]:
         return None
 
 def get_chats(user_id: int) -> List[Dict[str, Any]]:
-    """List all chats for a user, ordered by most recent update."""
+    """List all chats for a user, ordered by most recent update.
+    Auto-generates titles for chats still named 'New Chat' based on conversation summary.
+    Title is generated and saved once.
+    """
+    # Don't use cache during title generation check - we want fresh data
     cache_key = f"user:{user_id}:chats"
-    cached = redis_client.get(cache_key)
-    if cached:
-        return cached
-
+    
     try:
         with _get_connection() as conn:
             c = conn.cursor()
@@ -94,7 +95,60 @@ def get_chats(user_id: int) -> List[Dict[str, Any]]:
             )
             rows = c.fetchall()
             results = [dict(row) for row in rows]
-            redis_client.set(cache_key, results, expire_seconds=300) # Cache for 5 mins
+            
+            print(f"[CHAT AUTO-TITLE] Fetched {len(results)} chats for user {user_id}")
+            
+            # Auto-generate titles for "New Chat" sessions (only once)
+            titles_generated = 0
+            for chat in results:
+                if chat.get("title") == "New Chat":
+                    print(f"[CHAT AUTO-TITLE] Found 'New Chat' - chat_id={chat['id']}")
+                    # Check if chat has messages
+                    messages = get_messages(chat["id"])
+                    print(f"[CHAT AUTO-TITLE] Chat {chat['id']} has {len(messages)} messages")
+                    
+                    if len(messages) >= 2:  # At least 1 Q&A pair
+                        try:
+                            # Generate title based on conversation summary
+                            from api.chat_utils import generate_chat_title_from_conversation
+                            
+                            # Build conversation summary (first 3 Q&A pairs max)
+                            conversation_pairs = []
+                            for i in range(0, min(len(messages), 6), 2):
+                                if i + 1 < len(messages):
+                                    conversation_pairs.append({
+                                        "question": messages[i].get("content", ""),
+                                        "answer": messages[i+1].get("content", "")
+                                    })
+                            
+                            if conversation_pairs:
+                                print(f"[CHAT AUTO-TITLE] Generating title for chat {chat['id']} with {len(conversation_pairs)} Q&A pairs")
+                                # Generate title (doesn't save to DB)
+                                new_title = generate_chat_title_from_conversation(conversation_pairs)
+                                print(f"[CHAT AUTO-TITLE] Generated title: '{new_title}'")
+                                
+                                # Save to database once
+                                c.execute(
+                                    "UPDATE chats SET title = ? WHERE id = ?",
+                                    (new_title, chat["id"])
+                                )
+                                conn.commit()
+                                print(f"[CHAT AUTO-TITLE] Saved title to database for chat {chat['id']}")
+                                
+                                # Update the chat object in results
+                                chat["title"] = new_title
+                                titles_generated += 1
+                                
+                                # Invalidate cache since we updated a title
+                                redis_client.delete(cache_key)
+                        except Exception as e:
+                            print(f"[CHAT AUTO-TITLE ERROR] Failed for chat {chat['id']}: {e}")
+            
+            if titles_generated > 0:
+                print(f"[CHAT AUTO-TITLE] Generated {titles_generated} new titles")
+            
+            # Cache the results
+            redis_client.set(cache_key, results, expire_seconds=300)
             return results
     except sqlite3.Error as e:
         print(f"Error listing chats: {e}")

@@ -16,6 +16,7 @@ export const apiClient = axios.create({
     headers: {
         'Content-Type': 'application/json',
     },
+    timeout: 30000, // 30 second timeout to prevent hanging requests
 });
 
 
@@ -109,7 +110,9 @@ export const api = {
 
     // Chat
     askQuestion: (question: string, tableId: string) =>
-        apiClient.post('/api/chat/ask', { question, table_id: tableId }),
+        apiClient.post('/api/chat/ask', { question, table_id: tableId }, {
+            timeout: 60000, // 60s for QA engine processing
+        }),
 
     // OneDrive
     getOneDriveStatus: () => apiClient.get('/api/onedrive/status'),
@@ -167,6 +170,8 @@ export const api = {
         apiClient.post('/api/files/transform/preview', {
             table_id: tableId,
             transform_code: transformCode
+        }, {
+            timeout: 60000, // 60s for transform execution
         }),
 
     confirmTransform: (tableId: string, transformCode: string, displayName?: string, replaceOriginal: boolean = false) =>
