@@ -100,6 +100,7 @@ def list_all_cached_data() -> List[CachedDataInfo]:
             transform_code=info.get("transform_code"),
             source_metadata=info.get("source_metadata"),
             transform_explanation=info.get("transform_explanation"),
+            description=info.get("description"),
         ))
     
     # Sort by cached date, newest first

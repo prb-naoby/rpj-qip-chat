@@ -503,6 +503,7 @@ export default function OneDriveTab() {
                 mappingDescription || ''
             );
             const jobId = jobResponse.data.job_id;
+            toast.info('🤖 AI is generating transform code...', { duration: 3000 });
 
             // Poll until complete
             const result = await pollJobUntilComplete(jobId);
@@ -570,6 +571,7 @@ export default function OneDriveTab() {
                 feedback || transformFeedback || undefined
             );
             const jobId = jobResponse.data.job_id;
+            toast.info('⏳ Applying transform...', { duration: 2000 });
 
             // Poll until complete
             const result = await pollJobUntilComplete(jobId);

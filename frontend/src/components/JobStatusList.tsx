@@ -142,11 +142,26 @@ export function JobStatusList({
         }
     };
 
+    // User-friendly job type labels
+    const JOB_TYPE_LABELS: Record<string, string> = {
+        'onedrive_upload': 'Upload to OneDrive',
+        'append': 'Append Data',
+        'preview_transform': 'Preview Transform',
+        'generate_transform': 'AI Transform Generation',
+        'analyze': 'Data Analysis',
+        'transform_preview': 'Transform Preview',
+        'transform': 'Apply Transform',
+        'refine': 'Refine Transform',
+        'ingest': 'Document Ingestion',
+        'ingest_dry_run': 'Ingestion Test',
+        'load_sheet': 'Load Sheet',
+    };
+
     const getDisplayName = (job: JobState) => {
         if (job.metadata?.displayName) {
             return job.metadata.displayName;
         }
-        return job.job_type.replace(/_/g, ' ').toUpperCase();
+        return JOB_TYPE_LABELS[job.job_type] || job.job_type.replace(/_/g, ' ');
     };
 
     const activeCount = displayJobs.filter(j => j.status === 'running' || j.status === 'pending').length;
@@ -215,8 +230,8 @@ export function JobStatusList({
                                         <span className="text-sm font-medium break-words" title={getDisplayName(job)}>
                                             {getDisplayName(job)}
                                         </span>
-                                        <Badge variant="outline" className="text-[9px] h-4 px-1 leading-none rounded-sm uppercase flex-shrink-0">
-                                            {job.job_type}
+                                        <Badge variant="outline" className="text-[9px] h-4 px-1 leading-none rounded-sm flex-shrink-0">
+                                            {JOB_TYPE_LABELS[job.job_type] || job.job_type}
                                         </Badge>
                                     </div>
                                     {/* Actions - hidden in compact mode */}

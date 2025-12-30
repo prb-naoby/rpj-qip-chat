@@ -1662,14 +1662,23 @@ async def preview_append_transform(
                 "error": f"Preview transform failed: {str(e)}"
             }
     
-    # Submit to job manager
+    # Get display names for metadata
+    source_name = Path(request.source_table_id).stem if request.source_table_id else "Unknown"
+    target_name = Path(request.target_table_id).stem if request.target_table_id else "Unknown"
+    
+    # Submit to job manager with metadata
     job_id = job_manager.submit_job(
         _do_preview_transform,
         current_user["id"],
         "preview_transform",
         request.source_table_id,
         request.target_table_id,
-        request.user_feedback
+        request.user_feedback,
+        metadata={
+            "displayName": f"Preview: {source_name} → {target_name}",
+            "sourceTable": source_name,
+            "targetTable": target_name,
+        }
     )
     
     return {"job_id": job_id, "message": "Preview transform started"}
@@ -1754,28 +1763,37 @@ async def generate_append_transform(
     """
     def _do_generate_transform(source_table_id, target_table_id, user_description):
         """Background job to generate transform."""
+        import logging
+        logger = logging.getLogger("app.generate_transform")
+        logger.info(f"Starting transform generation: {source_table_id} → {target_table_id}")
+        
         try:
             target_path = Path(target_table_id)
             source_path = Path(source_table_id)
             
             if not target_path.exists():
+                logger.error(f"Target table not found: {target_table_id}")
                 return {"success": False, "error": "Target table not found"}
             if not source_path.exists():
+                logger.error(f"Source table not found: {source_table_id}")
                 return {"success": False, "error": "Source table not found"}
             
             # Get target table info
             target_info = get_target_table_info(target_path)
             target_columns = target_info["columns"]
+            logger.info(f"Target columns: {target_columns}")
             
             # Read source data for analysis
             source_df = pd.read_parquet(source_path)
             source_sample = source_df.head(10).to_string()
             source_columns = list(source_df.columns)
+            logger.info(f"Source columns: {source_columns}")
             
             # Generate transform using LLM
             app_settings = AppSettings()
             
             if not app_settings.openai_api_key:
+                logger.error("OPENAI_API_KEY not configured")
                 return {
                     "success": False,
                     "preview_data": [],
@@ -1785,6 +1803,7 @@ async def generate_append_transform(
             
             from openai import OpenAI
             client = OpenAI(api_key=app_settings.openai_api_key)
+            logger.info(f"Using OpenAI model: {app_settings.default_llm_model or 'gpt-4o-mini'}")
             
             prompt = f"""Generate Python pandas code to transform source data to match target table schema.
 
@@ -1814,6 +1833,7 @@ Generate the Python code:"""
                 model=app_settings.default_llm_model,
                 input=prompt,
             )
+            logger.info("OpenAI API call completed")
             
             if not response.output_text:
                 return {
@@ -1877,6 +1897,7 @@ Generate the Python code:"""
             }
             
         except Exception as e:
+            logger.exception(f"Transform generation failed: {str(e)}")
             return {
                 "success": False,
                 "preview_data": [],
@@ -1884,14 +1905,23 @@ Generate the Python code:"""
                 "error": f"Transform generation failed: {str(e)}"
             }
     
-    # Submit to job manager
+    # Get display names for metadata
+    source_name = Path(request.source_table_id).stem if request.source_table_id else "Unknown"
+    target_name = Path(request.target_table_id).stem if request.target_table_id else "Unknown"
+    
+    # Submit to job manager with metadata
     job_id = job_manager.submit_job(
         _do_generate_transform,
         current_user["id"],
         "generate_transform",
         request.source_table_id,
         request.target_table_id,
-        request.user_description
+        request.user_description,
+        metadata={
+            "displayName": f"Generate transform: {source_name} → {target_name}",
+            "sourceTable": source_name,
+            "targetTable": target_name,
+        }
     )
     
     return {"job_id": job_id, "message": "Transform generation started"}
@@ -2045,13 +2075,20 @@ async def preview_transform(
                 "error": f"Transform preview failed: {str(e)}"
             }
     
-    # Submit to job manager
+    # Get display name for metadata
+    table_name = Path(request.table_id).stem if request.table_id else "Unknown"
+    
+    # Submit to job manager with metadata
     job_id = job_manager.submit_job(
         _do_transform_preview,
         current_user["id"],
         "transform_preview",
         request.table_id,
-        request.transform_code
+        request.transform_code,
+        metadata={
+            "displayName": f"Preview: {table_name}",
+            "tableName": table_name,
+        }
     )
     
     return {"job_id": job_id, "message": "Transform preview started"}

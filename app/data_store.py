@@ -330,7 +330,22 @@ class DatasetCatalog:
                 """,
                 tuple(params)
             )
-            return cur.rowcount > 0
+            success = cur.rowcount > 0
+            
+            # Also update the JSON metadata file for backwards compatibility
+            if success:
+                from app.datasets import _load_cache_metadata, _save_cache_metadata
+                metadata = _load_cache_metadata()
+                if cache_id in metadata:
+                    if description is not None:
+                        metadata[cache_id]["description"] = description
+                    if display_name is not None:
+                        metadata[cache_id]["display_name"] = display_name
+                    if transform_explanation is not None:
+                        metadata[cache_id]["transform_explanation"] = transform_explanation
+                    _save_cache_metadata(metadata)
+            
+            return success
 
     def update_cached_sheet_stats(
         self,

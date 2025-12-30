@@ -134,6 +134,7 @@ export function AnalysisDialog({ tableId, tableName, isOpen, onClose, onSuccess,
             // Submit job and get job_id
             const jobResponse = await api.previewTransform(tableId, editedCode);
             const jobId = jobResponse.data.job_id;
+            toast.info('⏳ Running transform preview...', { duration: 2000 });
 
             // Poll until complete
             const result = await pollJobUntilComplete(jobId);
