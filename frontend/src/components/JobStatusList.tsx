@@ -54,7 +54,7 @@ export function JobStatusList({
 }: JobStatusListProps) {
     const [isOpen, setIsOpen] = useState(!defaultCollapsed);
     const [deletingJobs, setDeletingJobs] = useState<Set<string>>(new Set());
-    const [selectedFilter, setSelectedFilter] = useState<'all' | 'analyze' | 'transform'>('all');
+    const [selectedFilter, setSelectedFilter] = useState<'all' | 'analysis' | 'transform'>('all');
 
     // Get current user ID for ownership check
     const currentUserId = useAppSelector((state) => state.auth.user?.id);

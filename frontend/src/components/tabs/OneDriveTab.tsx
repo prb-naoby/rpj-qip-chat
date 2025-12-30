@@ -581,7 +581,6 @@ export default function OneDriveTab() {
     const resetAppendState = () => {
         setAppendValidation(null);
         setAppendTransformPreview(null);
-        setTransformFeedback('');
         setMappingDescription('');
         setAppendError(null);
     };
