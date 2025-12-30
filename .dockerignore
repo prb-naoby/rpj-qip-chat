@@ -16,7 +16,6 @@ __pycache__/
 data/
 *.db
 *.sqlite3
-uploads/
 
 # IDE
 .vscode/
@@ -25,7 +24,6 @@ uploads/
 
 # Docker
 docker-compose.yml
-Dockerfile
 .dockerignore
 
 # Tests (not needed in production image)
@@ -39,3 +37,9 @@ tests/
 scripts/
 .agent/
 .gemini/
+
+# Frontend build artifacts (will be rebuilt)
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/tests/
